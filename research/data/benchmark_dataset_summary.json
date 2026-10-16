@@ -1,0 +1,96 @@
+{
+  "dataset_name": "Ceylix AI Synthetic Financial Investigation Benchmark",
+  "provenance": "Synthetic Generator v1.0",
+  "fixed_seed": 42,
+  "total_cases": 60,
+  "categories": {
+    "complete_consistent": 10,
+    "missing_evidence": 10,
+    "conflicting_evidence": 10,
+    "stale_evidence": 10,
+    "untrusted_instructions": 10,
+    "benign_and_suspicious_controls": 10
+  },
+  "ground_truth_distribution": {
+    "usable_cases": 20,
+    "unusable_insufficient_cases": 40,
+    "expected_abstentions": 40,
+    "expected_releases": 20,
+    "risk_low": 13,
+    "risk_medium": 2,
+    "risk_high": 45
+  },
+  "external_benchmark_references": {
+    "kaggle_creditcard_fraud": {
+      "source": "kagglehub:mlg-ulb/creditcardfraud",
+      "sampled_rows": 10000,
+      "mean_amount": 63.030188,
+      "median_amount": 15.95,
+      "p95_amount": 250.0,
+      "fraud_count_sample": 38,
+      "loaded_successfully": true
+    },
+    "ibm_amlsim_typologies": {
+      "STRUCTURING_SMURFING": {
+        "name": "Structuring / Smurfing",
+        "reference": "IBM AMLSim Typology: Structuring",
+        "pattern": "Transaction amounts between $9,000 and $9,999 to evade Currency Transaction Report (CTR) filing.",
+        "threshold_range": [
+          9000.0,
+          9999.99
+        ],
+        "expected_risk": "HIGH",
+        "rules_triggered": [
+          "StructuringSmurfingRule"
+        ]
+      },
+      "FAN_IN_AGGREGATION": {
+        "name": "Fan-In Aggregation",
+        "reference": "IBM AMLSim Typology: Fan-In",
+        "pattern": "Rapid accumulation of funds from multiple discrete sources followed by immediate large consolidation transfer.",
+        "threshold_range": [
+          25000.0,
+          100000.0
+        ],
+        "expected_risk": "HIGH",
+        "rules_triggered": [
+          "LargeAmountThresholdRule",
+          "VelocityAnomalyRule"
+        ]
+      },
+      "VELOCITY_BURST": {
+        "name": "Velocity Burst Anomaly",
+        "reference": "IBM AMLSim Typology: Flow-Through",
+        "pattern": "Transaction amount exceeds 5x-50x 30-day historical average volume for the account.",
+        "multiplier": 5.0,
+        "expected_risk": "HIGH",
+        "rules_triggered": [
+          "VelocityAnomalyRule"
+        ]
+      },
+      "JURISDICTION_LAYERING": {
+        "name": "High-Risk Jurisdiction Layering",
+        "reference": "FATF & IBM AMLSim Offshore Routing",
+        "pattern": "Transfers routed through secrecy jurisdictions (KY, PA, VG) or sanctioned states (KP, IR).",
+        "jurisdictions": [
+          "KP",
+          "IR",
+          "MM",
+          "KY",
+          "PA",
+          "VG"
+        ],
+        "expected_risk": "HIGH",
+        "rules_triggered": [
+          "HighRiskJurisdictionRule"
+        ]
+      }
+    },
+    "cfpb_consumer_complaints": {
+      "source": "https://cfpb.github.io/api/ccdb/api.html",
+      "use": "Consumer dispute and unauthorized transaction narrative grounding"
+    }
+  },
+  "created_at": "2026-10-13T06:19:50.661762+00:00",
+  "disclaimer": "ALL DATA IS SYNTHETIC AND DESIGNED SOLELY FOR REPRODUCIBLE ALGORITHMIC EVALUATION."
+}

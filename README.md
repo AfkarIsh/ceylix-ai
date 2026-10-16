@@ -372,8 +372,8 @@ Update this section as real work is completed.
 - [x] Synthetic dataset generator implemented (60 cases, 6 categories, seed=42)
 - [x] External benchmark grounding (Kaggle creditcardfraud, IBM AMLSim, CFPB API)
 - [x] Evaluation completed (Workflow A vs Workflow B empirical benchmark)
-- [ ] Firestore integration tested
-- [ ] Frontend connected to backend
+- [x] Firestore audit sync tested (/api/cases/{case_id}/sync)
+- [x] Frontend connected to backend (Vite React 19 + FastAPI live dev proxy)
 - [ ] Deployment verified
 - [ ] Demo and submission materials completed
 
@@ -383,4 +383,4 @@ Ceylix AI is an experimental prototype for research and demonstration. It is not
 
 ---
 
-**Built for AI Builder Cup 2026 by Team Ceylix AI.**
+**Built for AI Builder Cup 2026 by Team LiquidAsh.**

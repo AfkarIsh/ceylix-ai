@@ -1,0 +1,136 @@
+/* ============================================================
+   Ceylix AI Workbench — Global Stylesheet
+   Tailwind directives + custom scrollbars + keyframe animations
+   ============================================================ */
+
+/* ── Base Layer ─────────────────────────────────────────────── */
+@layer base {
+  *, *::before, *::after {
+    box-sizing: border-box;
+  }
+
+  body {
+    margin: 0;
+    padding: 0;
+    font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont,
+      'Segoe UI', Roboto, sans-serif;
+    background-color: #020617; /* slate-950 */
+    color: #f1f5f9;             /* slate-100 */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overflow-x: hidden;
+  }
+
+  ::selection {
+    background-color: rgba(34, 211, 238, 0.15);
+    color: #67e8f9;
+  }
+}
+
+/* ── Custom Scrollbars ──────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: #050c1a;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #1e293b; /* slate-800 */
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #334155; /* slate-700 */
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #1e293b #050c1a;
+}
+
+/* ── Risk Gauge Animation ───────────────────────────────────── */
+@keyframes gaugeExpand {
+  from { width: 0%; }
+  to   { width: var(--gauge-target, 0%); }
+}
+
+.gauge-bar {
+  animation: gaugeExpand 0.9s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+/* ── Pulse Glow (status indicators) ────────────────────────── */
+@keyframes pulseGlow {
+  0%, 100% { opacity: 0.55; }
+  50%       { opacity: 1; }
+}
+
+.animate-pulse-glow {
+  animation: pulseGlow 2.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* ── Border Pulse (EMERGENCY_FREEZE card) ───────────────────── */
+@keyframes borderPulse {
+  0%, 100% { border-color: rgba(244, 63, 94, 0.25); box-shadow: 0 0 0 0 rgba(244, 63, 94, 0); }
+  50%       { border-color: rgba(244, 63, 94, 0.90); box-shadow: 0 0 12px 2px rgba(244, 63, 94, 0.25); }
+}
+
+.animate-border-pulse {
+  animation: borderPulse 1.6s ease-in-out infinite;
+}
+
+/* ── Scan-line shimmer (loading state) ──────────────────────── */
+@keyframes scanLine {
+  0%   { transform: translateY(-100%) scaleX(1); opacity: 0.5; }
+  100% { transform: translateY(400%)  scaleX(1); opacity: 0; }
+}
+
+.scan-line::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 40%;
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    rgba(34, 211, 238, 0.06) 50%,
+    transparent 100%
+  );
+  animation: scanLine 2s linear infinite;
+  pointer-events: none;
+}
+
+/* ── Fade-in slide-up (panel content reveal) ────────────────── */
+@keyframes fadeSlideUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeSlideUp 0.35s ease-out both;
+}
+
+/* ── Step connector line ─────────────────────────────────────── */
+.step-connector {
+  position: relative;
+}
+
+.step-connector::before {
+  content: '';
+  position: absolute;
+  left: 9px;
+  top: 20px;
+  bottom: -16px;
+  width: 1px;
+  background: linear-gradient(to bottom, #1e3a4a, transparent);
+}
+
+/* ── Mono utility override ───────────────────────────────────── */
+code, .font-mono, [class*="font-mono"] {
+  font-family: 'JetBrains Mono', 'Fira Code', ui-monospace,
+    SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}

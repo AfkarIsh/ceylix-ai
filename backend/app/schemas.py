@@ -1,0 +1,145 @@
+"""
+Data schemas and contracts for Ceylix AI.
+All data structures are strictly typed using Pydantic.
+Includes synthetic data provenance indicators and claim-level validation contracts.
+"""
+
+from typing import List, Dict, Any, Optional, Literal
+from pydantic import BaseModel, Field
+
+
+class EvidenceRecord(BaseModel):
+    """A discrete verifiable evidence record."""
+    evidence_id: str = Field(description="Unique identifier for the evidence record")
+    evidence_type: Literal[
+        "KYC_PROFILE",
+        "ACCOUNT_HISTORY",
+        "DEVICE_IP_TELEMETRY",
+        "SANCTIONS_PEP_SCREENING",
+        "COUNTERPARTY_REPUTATION",
+        "TERMINAL_LOCATION_LOG",
+        "INVOICE_RECEIPT"
+    ] = Field(description="Type of evidence")
+    timestamp: str = Field(description="ISO-8601 timestamp when evidence was recorded or verified")
+    source_system: str = Field(description="Source system of the evidence")
+    data: Dict[str, Any] = Field(description="Structured evidence payload")
+    is_synthetic: bool = Field(default=True, description="Provenance flag: all benchmark data is synthetic")
+
+
+class Transaction(BaseModel):
+    """The financial transaction under investigation."""
+    transaction_id: str = Field(description="Unique transaction reference")
+    timestamp: str = Field(description="ISO-8601 timestamp of transaction execution")
+    account_id: str = Field(description="Originating account ID")
+    customer_id: str = Field(description="Originating customer ID")
+    amount: float = Field(description="Transaction amount in original currency")
+    currency: str = Field(default="USD", description="ISO currency code")
+    channel: str = Field(description="Payment channel: WIRE, ONLINE_BANKING, MOBILE_APP, POS_CHIP, CARD_NOT_PRESENT")
+    counterparty_account: str = Field(description="Beneficiary account reference")
+    counterparty_name: str = Field(description="Beneficiary entity or personal name")
+    counterparty_bank: str = Field(description="Beneficiary financial institution")
+    counterparty_country: str = Field(description="Beneficiary country code (ISO 3166-1 alpha-2)")
+    device_id: Optional[str] = Field(default=None, description="Device identifier if available")
+    ip_address: Optional[str] = Field(default=None, description="Client IP address if available")
+    location: Optional[str] = Field(default=None, description="Reported location string")
+    memo: Optional[str] = Field(default=None, description="Customer-provided memo or payment reference")
+    is_synthetic: bool = Field(default=True, description="Provenance flag: all benchmark data is synthetic")
+
+
+class InvestigationCase(BaseModel):
+    """Model input payload for an investigation case."""
+    case_id: str = Field(description="Unique case identifier")
+    category: Literal[
+        "complete_consistent",
+        "missing_evidence",
+        "conflicting_evidence",
+        "stale_evidence",
+        "untrusted_instructions",
+        "benign_and_suspicious_controls"
+    ] = Field(description="Benchmark test case category")
+    scenario_name: str = Field(description="Human-readable scenario title")
+    description: str = Field(description="Brief case background")
+    is_synthetic: bool = Field(default=True, description="Provenance flag: synthetic case")
+    synthetic_disclaimer: str = Field(
+        default="SYNTHETIC BENCHMARK CASE - NOT REAL FINANCIAL RECORDS",
+        description="Explicit synthetic data notice"
+    )
+    created_at: str = Field(description="Case creation ISO-8601 timestamp")
+    transaction: Transaction = Field(description="Transaction to investigate")
+    evidence_records: List[EvidenceRecord] = Field(default_factory=list, description="Available evidence bundle")
+
+
+class ExpectedOutcome(BaseModel):
+    """Ground truth expected outcome kept separate from model inputs."""
+    case_id: str = Field(description="Matches InvestigationCase.case_id")
+    category: str = Field(description="Test case category")
+    scenario_name: str = Field(description="Scenario name")
+    ground_truth_risk: Literal["LOW", "MEDIUM", "HIGH"] = Field(description="True underlying risk level")
+    is_usable: bool = Field(description="Whether the case has complete, fresh, uncorrupted evidence")
+    expected_abstention: bool = Field(description="Whether the system should abstain or route for human review")
+    expected_abstention_reasons: List[str] = Field(default_factory=list, description="Specific defect codes")
+    required_evidence_types: List[str] = Field(default_factory=list, description="Evidence types required by policy")
+    known_conflicts: List[Dict[str, Any]] = Field(default_factory=list, description="Documented evidence conflicts")
+    stale_evidence_ids: List[str] = Field(default_factory=list, description="IDs of expired evidence records")
+    has_untrusted_injection: bool = Field(default=False, description="Whether memo contains adversarial instructions")
+
+
+class Claim(BaseModel):
+    """Structured claim generated by LLM and validated by deterministic rules."""
+    claim_id: str = Field(description="Identifier for the claim (e.g. claim-001)")
+    text: str = Field(description="Natural language claim assertion")
+    claim_type: Literal["factual_assertion", "rule_result", "risk_inference"] = Field(
+        default="factual_assertion",
+        description="Classification of the claim"
+    )
+    evidence_ids: List[str] = Field(
+        default_factory=list,
+        description="Referenced evidence record IDs backing this claim"
+    )
+    field_references: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        description="Explicit field mappings (e.g. [{'evidence_id': 'EVID-001', 'field': 'amount', 'value': 12000}])"
+    )
+    support_status: Literal[
+        "supported",
+        "unsupported",
+        "conflicting",
+        "stale",
+        "insufficient_evidence",
+        "requires_human_review"
+    ] = Field(default="supported", description="Verification status of the claim")
+    review_required: bool = Field(default=False, description="Whether human review is required for this claim")
+    validation_notes: Optional[str] = Field(default=None, description="Detailed validation rationale")
+
+
+class RuleEvaluationResult(BaseModel):
+    """Outcome of a transparent deterministic risk rule."""
+    rule_name: str = Field(description="Name of the deterministic rule")
+    rule_description: str = Field(description="Rule logic summary")
+    passed: bool = Field(description="True if rule passed without risk, False if risk condition triggered")
+    flagged: bool = Field(description="True if risk flag was raised")
+    details: str = Field(description="Observed value vs threshold")
+    severity: Literal["LOW", "MEDIUM", "HIGH", "INFO"] = Field(default="INFO")
+    evidence_ids: List[str] = Field(default_factory=list, description="Supporting evidence IDs for the rule")
+
+
+class InvestigationReport(BaseModel):
+    """Complete investigation report produced by either workflow."""
+    case_id: str = Field(description="Reference to investigated case")
+    workflow_type: Literal["baseline_unvalidated", "validated_deterministic"] = Field(
+        description="Workflow architecture used"
+    )
+    summary: str = Field(description="Executive case summary")
+    preliminary_risk_level: Literal["LOW", "MEDIUM", "HIGH"] = Field(description="Determined risk level")
+    claims: List[Claim] = Field(default_factory=list, description="Claim breakdown")
+    rule_results: List[RuleEvaluationResult] = Field(default_factory=list, description="Deterministic rule findings")
+    abstain_recommended: bool = Field(description="Whether the report abstains from automated clearance")
+    decision: Literal[
+        "RELEASE_WITH_PROVENANCE",
+        "RELEASE_QUALIFIED",
+        "ABSTAIN_FOR_HUMAN_REVIEW"
+    ] = Field(description="Final disposition")
+    abstention_reasons: List[str] = Field(default_factory=list, description="Specific defect or escalation reasons")
+    warnings: List[str] = Field(default_factory=list, description="Advisory notices")
+    latency_ms: float = Field(default=0.0, description="Total workflow processing time in milliseconds")
+    timestamp: str = Field(description="Timestamp of report generation")

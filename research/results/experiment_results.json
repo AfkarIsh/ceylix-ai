@@ -1,0 +1,475 @@
+{
+  "benchmark_metadata": {
+    "total_cases_evaluated": 2,
+    "execution_mode": "simulation",
+    "timestamp": "2026-10-13T06:20:10Z",
+    "total_time_baseline_sec": 0.04,
+    "total_time_validated_sec": 0.04
+  },
+  "metrics": {
+    "baseline_unvalidated": {
+      "workflow_name": "baseline_unvalidated",
+      "total_cases": 2,
+      "total_claims": 6,
+      "unsupported_claims": 0,
+      "unsupported_claim_rate": 0.0,
+      "traceable_claims": 6,
+      "evidence_traceability": 1.0,
+      "insufficient_cases_total": 0,
+      "correct_abstentions": 0,
+      "correct_abstention_rate": 0.0,
+      "usable_cases_total": 2,
+      "false_rejections": 0,
+      "false_rejection_rate": 0.0,
+      "latency_mean_ms": 20.48,
+      "latency_median_ms": 20.48,
+      "latency_p95_ms": 20.53,
+      "category_breakdown": {
+        "complete_consistent": {
+          "case_count": 2,
+          "claims_total": 6,
+          "unsupported_claims": 0,
+          "unsupported_rate": 0.0,
+          "abstained_count": 0,
+          "abstention_rate": 0.0,
+          "median_latency_ms": 20.48
+        }
+      }
+    },
+    "validated_deterministic": {
+      "workflow_name": "validated_deterministic",
+      "total_cases": 2,
+      "total_claims": 6,
+      "unsupported_claims": 0,
+      "unsupported_claim_rate": 0.0,
+      "traceable_claims": 6,
+      "evidence_traceability": 1.0,
+      "insufficient_cases_total": 0,
+      "correct_abstentions": 0,
+      "correct_abstention_rate": 0.0,
+      "usable_cases_total": 2,
+      "false_rejections": 0,
+      "false_rejection_rate": 0.0,
+      "latency_mean_ms": 40.75,
+      "latency_median_ms": 40.75,
+      "latency_p95_ms": 41.06,
+      "category_breakdown": {
+        "complete_consistent": {
+          "case_count": 2,
+          "claims_total": 6,
+          "unsupported_claims": 0,
+          "unsupported_rate": 0.0,
+          "abstained_count": 0,
+          "abstention_rate": 0.0,
+          "median_latency_ms": 40.75
+        }
+      }
+    }
+  },
+  "detailed_runs": {
+    "baseline_reports": [
+      {
+        "case_id": "CASE-001",
+        "workflow_type": "baseline_unvalidated",
+        "summary": "Transaction of $42,000.00 to Apex Logistics GmbH evaluated as HIGH risk.",
+        "preliminary_risk_level": "HIGH",
+        "claims": [
+          {
+            "claim_id": "claim-001",
+            "text": "Transaction amount is $42,000.00 EUR.",
+            "claim_type": "factual_assertion",
+            "evidence_ids": [
+              "TXN-0001"
+            ],
+            "field_references": [
+              {
+                "evidence_id": "TXN-0001",
+                "field": "amount",
+                "value": 42000.0
+              }
+            ],
+            "support_status": "supported",
+            "review_required": false,
+            "validation_notes": null
+          },
+          {
+            "claim_id": "claim-002",
+            "text": "Counterparty Apex Logistics GmbH located in DE.",
+            "claim_type": "factual_assertion",
+            "evidence_ids": [
+              "TXN-0001"
+            ],
+            "field_references": [
+              {
+                "evidence_id": "TXN-0001",
+                "field": "counterparty_country",
+                "value": "DE"
+              }
+            ],
+            "support_status": "supported",
+            "review_required": false,
+            "validation_notes": null
+          },
+          {
+            "claim_id": "claim-003",
+            "text": "Customer evidence verified in source system records.",
+            "claim_type": "factual_assertion",
+            "evidence_ids": [
+              "EVID-001-1"
+            ],
+            "field_references": [],
+            "support_status": "supported",
+            "review_required": false,
+            "validation_notes": null
+          }
+        ],
+        "rule_results": [],
+        "abstain_recommended": false,
+        "decision": "RELEASE_WITH_PROVENANCE",
+        "abstention_reasons": [],
+        "warnings": [],
+        "latency_ms": 20.53,
+        "timestamp": "2026-10-13T06:20:10.650250+00:00"
+      },
+      {
+        "case_id": "CASE-002",
+        "workflow_type": "baseline_unvalidated",
+        "summary": "Transaction of $15,500.00 to Helena Vance evaluated as HIGH risk.",
+        "preliminary_risk_level": "HIGH",
+        "claims": [
+          {
+            "claim_id": "claim-001",
+            "text": "Transaction amount is $15,500.00 USD.",
+            "claim_type": "factual_assertion",
+            "evidence_ids": [
+              "TXN-0002"
+            ],
+            "field_references": [
+              {
+                "evidence_id": "TXN-0002",
+                "field": "amount",
+                "value": 15500.0
+              }
+            ],
+            "support_status": "supported",
+            "review_required": false,
+            "validation_notes": null
+          },
+          {
+            "claim_id": "claim-002",
+            "text": "Counterparty Helena Vance located in US.",
+            "claim_type": "factual_assertion",
+            "evidence_ids": [
+              "TXN-0002"
+            ],
+            "field_references": [
+              {
+                "evidence_id": "TXN-0002",
+                "field": "counterparty_country",
+                "value": "US"
+              }
+            ],
+            "support_status": "supported",
+            "review_required": false,
+            "validation_notes": null
+          },
+          {
+            "claim_id": "claim-003",
+            "text": "Customer evidence verified in source system records.",
+            "claim_type": "factual_assertion",
+            "evidence_ids": [
+              "EVID-002-1"
+            ],
+            "field_references": [],
+            "support_status": "supported",
+            "review_required": false,
+            "validation_notes": null
+          }
+        ],
+        "rule_results": [],
+        "abstain_recommended": false,
+        "decision": "RELEASE_WITH_PROVENANCE",
+        "abstention_reasons": [],
+        "warnings": [],
+        "latency_ms": 20.44,
+        "timestamp": "2026-10-13T06:20:10.670798+00:00"
+      }
+    ],
+    "validated_reports": [
+      {
+        "case_id": "CASE-001",
+        "workflow_type": "validated_deterministic",
+        "summary": "Transaction of $42,000.00 to Apex Logistics GmbH evaluated as HIGH risk.",
+        "preliminary_risk_level": "HIGH",
+        "claims": [
+          {
+            "claim_id": "claim-001",
+            "text": "Transaction amount is $42,000.00 EUR.",
+            "claim_type": "factual_assertion",
+            "evidence_ids": [
+              "TXN-0001"
+            ],
+            "field_references": [
+              {
+                "evidence_id": "TXN-0001",
+                "field": "amount",
+                "value": 42000.0
+              }
+            ],
+            "support_status": "supported",
+            "review_required": false,
+            "validation_notes": "Verified against recorded evidence."
+          },
+          {
+            "claim_id": "claim-002",
+            "text": "Counterparty Apex Logistics GmbH located in DE.",
+            "claim_type": "factual_assertion",
+            "evidence_ids": [
+              "TXN-0001"
+            ],
+            "field_references": [
+              {
+                "evidence_id": "TXN-0001",
+                "field": "counterparty_country",
+                "value": "DE"
+              }
+            ],
+            "support_status": "supported",
+            "review_required": false,
+            "validation_notes": "Verified against recorded evidence."
+          },
+          {
+            "claim_id": "claim-003",
+            "text": "Customer evidence verified in source system records.",
+            "claim_type": "factual_assertion",
+            "evidence_ids": [
+              "EVID-001-1"
+            ],
+            "field_references": [],
+            "support_status": "supported",
+            "review_required": false,
+            "validation_notes": "Verified against recorded evidence."
+          }
+        ],
+        "rule_results": [
+          {
+            "rule_name": "LargeAmountThresholdRule",
+            "rule_description": "Flags transactions exceeding $10,000.00 USD equivalent",
+            "passed": false,
+            "flagged": true,
+            "details": "Transaction amount $42,000.00 EUR (Threshold: $10,000.00)",
+            "severity": "HIGH",
+            "evidence_ids": []
+          },
+          {
+            "rule_name": "StructuringSmurfingRule",
+            "rule_description": "Flags transactions just below the $10,000 CTR reporting threshold (potential structuring)",
+            "passed": true,
+            "flagged": false,
+            "details": "Amount $42,000.00 in range [$9,000.00, $9,999.99]",
+            "severity": "INFO",
+            "evidence_ids": []
+          },
+          {
+            "rule_name": "HighRiskJurisdictionRule",
+            "rule_description": "Flags counterparty beneficiaries in high-risk or secrecy jurisdictions",
+            "passed": true,
+            "flagged": false,
+            "details": "Counterparty country 'DE' (High-risk match: False)",
+            "severity": "INFO",
+            "evidence_ids": []
+          },
+          {
+            "rule_name": "VelocityAnomalyRule",
+            "rule_description": "Compares transaction amount against 30-day historical average volume (>5x baseline)",
+            "passed": true,
+            "flagged": false,
+            "details": "Transaction is 1.2x historical average ($33,600.00)",
+            "severity": "INFO",
+            "evidence_ids": [
+              "EVID-001-3"
+            ]
+          },
+          {
+            "rule_name": "DeviceAnomalyRule",
+            "rule_description": "Validates transaction device and VPN/proxy presence",
+            "passed": true,
+            "flagged": false,
+            "details": "Unknown device: False, VPN/Proxy: False",
+            "severity": "INFO",
+            "evidence_ids": [
+              "EVID-001-4"
+            ]
+          },
+          {
+            "rule_name": "SanctionsWatchlistRule",
+            "rule_description": "Screens counterparty and account against OFAC, PEP, and global watchlists",
+            "passed": true,
+            "flagged": false,
+            "details": "Watchlist screening status: NO_MATCH",
+            "severity": "INFO",
+            "evidence_ids": [
+              "EVID-001-2"
+            ]
+          },
+          {
+            "rule_name": "KycVerificationRule",
+            "rule_description": "Validates that customer identity verification is complete and active",
+            "passed": true,
+            "flagged": false,
+            "details": "KYC verification status: VERIFIED",
+            "severity": "INFO",
+            "evidence_ids": [
+              "EVID-001-1"
+            ]
+          }
+        ],
+        "abstain_recommended": false,
+        "decision": "RELEASE_QUALIFIED",
+        "abstention_reasons": [],
+        "warnings": [
+          "High risk rule flag: LargeAmountThresholdRule - Transaction amount $42,000.00 EUR (Threshold: $10,000.00)"
+        ],
+        "latency_ms": 41.06,
+        "timestamp": "2026-10-13T06:20:10.691821+00:00"
+      },
+      {
+        "case_id": "CASE-002",
+        "workflow_type": "validated_deterministic",
+        "summary": "Transaction of $15,500.00 to Helena Vance evaluated as HIGH risk.",
+        "preliminary_risk_level": "HIGH",
+        "claims": [
+          {
+            "claim_id": "claim-001",
+            "text": "Transaction amount is $15,500.00 USD.",
+            "claim_type": "factual_assertion",
+            "evidence_ids": [
+              "TXN-0002"
+            ],
+            "field_references": [
+              {
+                "evidence_id": "TXN-0002",
+                "field": "amount",
+                "value": 15500.0
+              }
+            ],
+            "support_status": "supported",
+            "review_required": false,
+            "validation_notes": "Verified against recorded evidence."
+          },
+          {
+            "claim_id": "claim-002",
+            "text": "Counterparty Helena Vance located in US.",
+            "claim_type": "factual_assertion",
+            "evidence_ids": [
+              "TXN-0002"
+            ],
+            "field_references": [
+              {
+                "evidence_id": "TXN-0002",
+                "field": "counterparty_country",
+                "value": "US"
+              }
+            ],
+            "support_status": "supported",
+            "review_required": false,
+            "validation_notes": "Verified against recorded evidence."
+          },
+          {
+            "claim_id": "claim-003",
+            "text": "Customer evidence verified in source system records.",
+            "claim_type": "factual_assertion",
+            "evidence_ids": [
+              "EVID-002-1"
+            ],
+            "field_references": [],
+            "support_status": "supported",
+            "review_required": false,
+            "validation_notes": "Verified against recorded evidence."
+          }
+        ],
+        "rule_results": [
+          {
+            "rule_name": "LargeAmountThresholdRule",
+            "rule_description": "Flags transactions exceeding $10,000.00 USD equivalent",
+            "passed": false,
+            "flagged": true,
+            "details": "Transaction amount $15,500.00 USD (Threshold: $10,000.00)",
+            "severity": "HIGH",
+            "evidence_ids": []
+          },
+          {
+            "rule_name": "StructuringSmurfingRule",
+            "rule_description": "Flags transactions just below the $10,000 CTR reporting threshold (potential structuring)",
+            "passed": true,
+            "flagged": false,
+            "details": "Amount $15,500.00 in range [$9,000.00, $9,999.99]",
+            "severity": "INFO",
+            "evidence_ids": []
+          },
+          {
+            "rule_name": "HighRiskJurisdictionRule",
+            "rule_description": "Flags counterparty beneficiaries in high-risk or secrecy jurisdictions",
+            "passed": true,
+            "flagged": false,
+            "details": "Counterparty country 'US' (High-risk match: False)",
+            "severity": "INFO",
+            "evidence_ids": []
+          },
+          {
+            "rule_name": "VelocityAnomalyRule",
+            "rule_description": "Compares transaction amount against 30-day historical average volume (>5x baseline)",
+            "passed": true,
+            "flagged": false,
+            "details": "Transaction is 1.2x historical average ($12,400.00)",
+            "severity": "INFO",
+            "evidence_ids": [
+              "EVID-002-3"
+            ]
+          },
+          {
+            "rule_name": "DeviceAnomalyRule",
+            "rule_description": "Validates transaction device and VPN/proxy presence",
+            "passed": true,
+            "flagged": false,
+            "details": "Unknown device: False, VPN/Proxy: False",
+            "severity": "INFO",
+            "evidence_ids": [
+              "EVID-002-4"
+            ]
+          },
+          {
+            "rule_name": "SanctionsWatchlistRule",
+            "rule_description": "Screens counterparty and account against OFAC, PEP, and global watchlists",
+            "passed": true,
+            "flagged": false,
+            "details": "Watchlist screening status: NO_MATCH",
+            "severity": "INFO",
+            "evidence_ids": [
+              "EVID-002-2"
+            ]
+          },
+          {
+            "rule_name": "KycVerificationRule",
+            "rule_description": "Validates that customer identity verification is complete and active",
+            "passed": true,
+            "flagged": false,
+            "details": "KYC verification status: VERIFIED",
+            "severity": "INFO",
+            "evidence_ids": [
+              "EVID-002-1"
+            ]
+          }
+        ],
+        "abstain_recommended": false,
+        "decision": "RELEASE_QUALIFIED",
+        "abstention_reasons": [],
+        "warnings": [
+          "High risk rule flag: LargeAmountThresholdRule - Transaction amount $15,500.00 USD (Threshold: $10,000.00)"
+        ],
+        "latency_ms": 40.44,
+        "timestamp": "2026-10-13T06:20:10.712211+00:00"
+      }
+    ]
+  }
+}
