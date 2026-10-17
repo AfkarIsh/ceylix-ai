@@ -5,7 +5,7 @@ Includes synthetic data provenance indicators and claim-level validation contrac
 """
 
 from typing import List, Dict, Any, Optional, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class EvidenceRecord(BaseModel):
@@ -39,11 +39,26 @@ class Transaction(BaseModel):
     counterparty_name: str = Field(description="Beneficiary entity or personal name")
     counterparty_bank: str = Field(description="Beneficiary financial institution")
     counterparty_country: str = Field(description="Beneficiary country code (ISO 3166-1 alpha-2)")
+    origin_country: Optional[str] = Field(default=None, description="Originating country code (ISO 3166-1 alpha-2)")
+    destination_country: Optional[str] = Field(default=None, description="Destination country code (ISO 3166-1 alpha-2)")
     device_id: Optional[str] = Field(default=None, description="Device identifier if available")
     ip_address: Optional[str] = Field(default=None, description="Client IP address if available")
     location: Optional[str] = Field(default=None, description="Reported location string")
     memo: Optional[str] = Field(default=None, description="Customer-provided memo or payment reference")
     is_synthetic: bool = Field(default=True, description="Provenance flag: all benchmark data is synthetic")
+
+    @model_validator(mode="after")
+    def populate_country_defaults(self) -> "Transaction":
+        if not self.origin_country:
+            self.origin_country = "US"
+        if not self.destination_country:
+            self.destination_country = self.counterparty_country or "US"
+        return self
+
+    @property
+    def amount_usd(self) -> float:
+        """Normalized transaction amount in USD."""
+        return float(self.amount)
 
 
 class InvestigationCase(BaseModel):
@@ -127,7 +142,16 @@ class InvestigationReport(BaseModel):
     """Complete investigation report produced by either workflow."""
     case_id: str = Field(description="Reference to investigated case")
     workflow_type: Literal["baseline_unvalidated", "validated_deterministic"] = Field(
+        default="validated_deterministic",
         description="Workflow architecture used"
+    )
+    workflow: Optional[str] = Field(
+        default="validated_deterministic",
+        description="Convenience alias for workflow_type"
+    )
+    fast_path_used: bool = Field(
+        default=False,
+        description="Whether the validated workflow completed via the deterministic System-1 fast path"
     )
     summary: str = Field(description="Executive case summary")
     preliminary_risk_level: Literal["LOW", "MEDIUM", "HIGH"] = Field(description="Determined risk level")
@@ -143,3 +167,13 @@ class InvestigationReport(BaseModel):
     warnings: List[str] = Field(default_factory=list, description="Advisory notices")
     latency_ms: float = Field(default=0.0, description="Total workflow processing time in milliseconds")
     timestamp: str = Field(description="Timestamp of report generation")
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_workflow_type(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "workflow" in data and "workflow_type" not in data:
+                data["workflow_type"] = data["workflow"]
+            if "workflow_type" in data and not data.get("workflow"):
+                data["workflow"] = data["workflow_type"]
+        return data

@@ -5,7 +5,7 @@
  * grounding status, and measured roundtrip latency display.
  *
  * Props:
- *   result           object  — investigation result (from types.js mock or backend)
+ *   result           object  — live investigation result from FastAPI backend
  *   lastExecutionTime string  — e.g. "2,840 ms"
  *   isInvestigating  boolean — whether a triage is currently in flight
  *   backendStatus    string
@@ -132,6 +132,13 @@ function ProbeChip({ status }) {
           MATCHED
         </span>
       );
+    case 'RUNNING':
+      return (
+        <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded border text-cyan-400 bg-cyan-950/40 border-cyan-800/80 flex-shrink-0 flex items-center gap-1">
+          <Loader2 className="w-2.5 h-2.5 animate-spin" />
+          RUNNING
+        </span>
+      );
     case 'DATA_UNAVAILABLE':
       return (
         <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded border text-amber-400 bg-amber-950/40 border-amber-800/80 flex-shrink-0">
@@ -176,7 +183,7 @@ function GroundingBadge({ status }) {
       );
     default:
       return (
-        <span className="text-[10px] font-mono text-slate-400">{status}</span>
+        <span className="text-[10px] font-mono text-slate-400">{status || 'PENDING'}</span>
       );
   }
 }
@@ -201,8 +208,28 @@ export default function AgentStepperPanel({
   isInvestigating,
   backendStatus,
 }) {
-  const latencyS = (result.latency_ms / 1000).toFixed(2);
-  const latencyMs = result.latency_ms.toLocaleString();
+  const latencyMs = result?.latency_ms != null ? result.latency_ms : null;
+  const latencyS = latencyMs != null ? (latencyMs / 1000).toFixed(2) : null;
+
+  const system1Model = result?.system1_model || (isInvestigating ? 'gemini-3.8-flash (Reflex)' : 'gemini-3.8-flash');
+  const system1Disposition = result?.system1_disposition || (isInvestigating ? 'EVALUATING' : 'STANDBY');
+  const score = result?.calibrated_score ?? 0;
+
+  const ofacProbe = result?.probes?.ofac_sdn || {
+    status: isInvestigating ? 'RUNNING' : 'DATA_UNAVAILABLE',
+    detail: isInvestigating ? 'Validating against OFAC SDN & consolidated sanctions...' : 'Awaiting investigation run',
+  };
+  const ipGeoProbe = result?.probes?.ip_geo || {
+    status: isInvestigating ? 'RUNNING' : 'DATA_UNAVAILABLE',
+    detail: isInvestigating ? 'Inspecting IP geolocation, ASN & proxy headers...' : 'Awaiting investigation run',
+  };
+  const coreKycProbe = result?.probes?.core_kyc || {
+    status: isInvestigating ? 'RUNNING' : 'DATA_UNAVAILABLE',
+    detail: isInvestigating ? 'Comparing transaction velocity with core KYC baseline...' : 'Awaiting investigation run',
+  };
+
+  const system2Model = result?.system2_model || (isInvestigating ? 'gemini-3.8-flash (Synthesis)' : 'gemini-3.8-flash');
+  const quarantinedCount = result?.quarantined_claims?.length || 0;
 
   return (
     <section className={`bg-slate-900/60 border border-slate-800 rounded-xl p-5 flex flex-col shadow-xl relative ${isInvestigating ? 'scan-line overflow-hidden' : ''}`}>
@@ -234,14 +261,16 @@ export default function AgentStepperPanel({
             </div>
             <div className="flex flex-col items-end gap-1">
               <span className="text-[10px] font-mono text-slate-400 bg-slate-900 px-1.5 py-0.5 rounded border border-slate-800">
-                {result.system1_model}
+                {system1Model}
               </span>
               <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border ${
-                result.system1_disposition === 'PASS'
+                system1Disposition === 'PASS'
                   ? 'text-emerald-400 bg-emerald-950/40 border-emerald-800/80'
-                  : 'text-amber-400 bg-amber-950/40 border-amber-800/80'
+                  : system1Disposition === 'FLAG' || system1Disposition === 'ESCALATE' || system1Disposition === 'DISPATCH_INVESTIGATION'
+                  ? 'text-amber-400 bg-amber-950/40 border-amber-800/80'
+                  : 'text-slate-400 bg-slate-900 border-slate-800'
               }`}>
-                {result.system1_disposition}
+                {system1Disposition}
               </span>
             </div>
           </div>
@@ -252,8 +281,12 @@ export default function AgentStepperPanel({
               <Loader2 className="w-3.5 h-3.5 animate-spin text-cyan-400" />
               <span>Computing triage score…</span>
             </div>
+          ) : !result ? (
+            <div className="mt-3 text-[11px] text-slate-500 font-mono">
+              <span>Awaiting investigation score…</span>
+            </div>
           ) : (
-            <RiskGauge score={result.calibrated_score} />
+            <RiskGauge score={score} />
           )}
         </div>
 
@@ -278,10 +311,10 @@ export default function AgentStepperPanel({
                   <ShieldAlert className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
                   <span className="text-[11px] font-medium text-slate-300">OFAC SDN & Consolidated List</span>
                 </div>
-                <ProbeChip status={result.probes.ofac_sdn.status} />
+                <ProbeChip status={ofacProbe.status} />
               </div>
               <p className="text-[10px] text-slate-500 mt-1.5 ml-5 leading-snug">
-                {result.probes.ofac_sdn.detail}
+                {ofacProbe.detail}
               </p>
             </div>
 
@@ -292,10 +325,10 @@ export default function AgentStepperPanel({
                   <Globe className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
                   <span className="text-[11px] font-medium text-slate-300">IP Geolocation (ip-api.com)</span>
                 </div>
-                <ProbeChip status={result.probes.ip_geo.status} />
+                <ProbeChip status={ipGeoProbe.status} />
               </div>
               <p className="text-[10px] text-slate-500 mt-1.5 ml-5 leading-snug">
-                {result.probes.ip_geo.detail}
+                {ipGeoProbe.detail}
               </p>
             </div>
 
@@ -306,10 +339,10 @@ export default function AgentStepperPanel({
                   <Database className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
                   <span className="text-[11px] font-medium text-slate-300">Core KYC & Velocity Baseline</span>
                 </div>
-                <ProbeChip status={result.probes.core_kyc.status} />
+                <ProbeChip status={coreKycProbe.status} />
               </div>
               <p className="text-[10px] text-slate-500 mt-1.5 ml-5 leading-snug">
-                {result.probes.core_kyc.detail}
+                {coreKycProbe.detail}
               </p>
             </div>
           </div>
@@ -326,7 +359,7 @@ export default function AgentStepperPanel({
               </div>
             </div>
             <span className="text-[10px] font-mono text-slate-400 bg-slate-900 px-1.5 py-0.5 rounded border border-slate-800">
-              {result.system2_model}
+              {system2Model}
             </span>
           </div>
 
@@ -340,6 +373,8 @@ export default function AgentStepperPanel({
                   <Activity className="w-3 h-3 animate-pulse text-cyan-400" />
                   <span>Grounding claims…</span>
                 </div>
+              ) : !result ? (
+                <span className="text-[10px] font-mono text-slate-500">AWAITING TRIAGE</span>
               ) : (
                 <GroundingBadge status={result.grounding_status} />
               )}
@@ -349,9 +384,13 @@ export default function AgentStepperPanel({
                 Deterministic Gate
               </div>
               <span className="text-[10px] font-mono text-cyan-300">
-                {result.quarantined_claims && result.quarantined_claims.length > 0
-                  ? `CONTAINMENT ACTIVE (${result.quarantined_claims.length} quarantined)`
-                  : 'PASSED (0 quarantined)'}
+                {isInvestigating
+                  ? 'EVALUATING CONSTRAINTS...'
+                  : quarantinedCount > 0
+                  ? `CONTAINMENT ACTIVE (${quarantinedCount} quarantined)`
+                  : result
+                  ? 'PASSED (0 quarantined)'
+                  : 'STANDBY'}
               </span>
             </div>
           </div>
@@ -369,16 +408,20 @@ export default function AgentStepperPanel({
                 <Loader2 className="w-3 h-3 animate-spin" />
                 In-flight…
               </span>
-            ) : (
+            ) : latencyMs != null ? (
               <span className="text-cyan-300 font-semibold text-[12px]">
-                ⏱ {latencyS}s ({latencyMs} ms)
+                ⏱ {latencyS}s ({latencyMs.toLocaleString()} ms)
+              </span>
+            ) : (
+              <span className="text-slate-500 text-[11px] font-mono">
+                ⏱ Ready
               </span>
             )}
           </div>
           <div className="mt-1.5 flex items-center gap-2 text-[10px] text-slate-600">
             <Cpu className="w-3 h-3" />
             <span>
-              {backendStatus === 'connected' ? 'Live backend response — Vertex AI Gemini endpoint' : 'Simulated latency — deterministic benchmark'}
+              {backendStatus === 'connected' ? 'Live backend response — Gemini API & Deterministic Validation' : 'Backend offline — service disconnected'}
             </span>
           </div>
         </div>

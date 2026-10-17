@@ -39,6 +39,14 @@ The prototype is designed around five steps:
 
 A valid evidence ID alone does **not** prove that a statement is semantically supported. Validation should compare the actual referenced fields and values. Complex inferences must remain reviewable by a human.
 
+### Current safety and analyst workflow features
+
+- **System-1 fast path:** clean, low-value domestic retail/wholesale transactions can be released through the deterministic path without invoking Gemini.
+- **Prompt-injection containment:** adversarial tokens in transaction memos or beneficiary names are detected by the evidence validator and surfaced as quarantined claims in the analyst dossier.
+- **History classification:** local and repository history entries are labeled from the actual transaction payload and final disposition as Scenario A (benign retail), Scenario B (sanction/high-risk), or Scenario C (prompt injection).
+- **Workspace recovery:** the Gemini prompt clears after submission, and a dark error boundary provides a reset action if a rendering failure reaches the React tree.
+- **Model fallback:** Google Gemini is preferred when configured; OpenRouter uses the provider-qualified model in `OPENROUTER_MODEL` and normalizes legacy unqualified Gemini IDs.
+
 ## 3. Research Question
 
 **Does a provenance-aware validation and abstention layer reduce unsupported claims in AI-generated financial investigation reports when evidence is missing, stale, contradictory, or unavailable, compared with the same LLM workflow without that layer?**
@@ -192,7 +200,7 @@ Define the unit of measurement and labeling rules before running the test. Have 
 ```bash
 python -m pytest -v
 ```
-*(14 unit and integration tests passing covering generator reproducibility, deterministic rules, claim validation, and metrics computation).*
+The backend suite covers generator reproducibility, deterministic rules, claim validation, workflow fast-path behavior, and metrics computation.
 
 **Step 2: Regenerate the Benchmark Dataset (Seed: 42)**
 ```bash
@@ -297,6 +305,13 @@ npm run dev
 
 Use the local URL printed by the frontend development server. These commands will work only after the corresponding files and scripts have been created.
 
+To verify the production bundle:
+
+```bash
+cd frontend
+npm run build
+```
+
 ## 11. Environment Variables
 
 Create a local `.env` file from `.env.example`. Do not commit `.env`.
@@ -304,6 +319,8 @@ Create a local `.env` file from `.env.example`. Do not commit `.env`.
 ```dotenv
 GEMINI_API_KEY=
 GEMINI_MODEL=
+OPENROUTER_API_KEY=
+OPENROUTER_MODEL=google/gemini-2.5-flash
 GOOGLE_CLOUD_PROJECT=
 FIRESTORE_COLLECTION=cases
 ```

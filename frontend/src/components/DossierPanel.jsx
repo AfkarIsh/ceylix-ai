@@ -34,7 +34,40 @@ import { DISPOSITION } from '../types.js';
 // ─────────────────────────────────────────────────────────────────────────────
 // Disposition header card — colour varies by disposition type
 // ─────────────────────────────────────────────────────────────────────────────
-function DispositionHeader({ disposition }) {
+function DispositionHeader({ disposition, isInvestigating }) {
+  if (isInvestigating) {
+    return (
+      <div className="p-3.5 rounded-lg border bg-cyan-950/30 border-cyan-700/60 text-cyan-300 animate-pulse">
+        <div className="text-[10px] uppercase font-bold tracking-widest opacity-70 mb-1">
+          Forensic Triage In-Flight
+        </div>
+        <div className="text-sm font-bold font-mono tracking-wide flex items-center gap-2">
+          <Loader2 className="w-4 h-4 text-cyan-400 animate-spin flex-shrink-0" />
+          SYNTHESIZING REGULATORY DISPOSITION...
+        </div>
+        <div className="text-[10px] text-cyan-400/70 mt-1">
+          Running deterministic evidence validator and Gemini 2.5 synthesis
+        </div>
+      </div>
+    );
+  }
+
+  if (!disposition) {
+    return (
+      <div className="p-3.5 rounded-lg border bg-slate-900/60 border-slate-800 text-slate-400">
+        <div className="text-[10px] uppercase font-bold tracking-widest opacity-70 mb-1">
+          Disposition Status
+        </div>
+        <div className="text-sm font-bold font-mono tracking-wide text-slate-300">
+          AWAITING INVESTIGATION
+        </div>
+        <div className="text-[10px] text-slate-500 mt-1">
+          Execute triage to evaluate transaction telemetry against regulatory baselines
+        </div>
+      </div>
+    );
+  }
+
   if (disposition === DISPOSITION.DISMISS) {
     return (
       <div className="p-3.5 rounded-lg border bg-emerald-950/40 border-emerald-800/80 text-emerald-300 animate-fade-in">
@@ -185,6 +218,7 @@ function FirestoreSyncButton({ syncState, syncTs, onSync }) {
 // ─────────────────────────────────────────────────────────────────────────────
 export default function DossierPanel({
   result,
+  isInvestigating = false,
   caseId,
   payload,
   backendStatus,
@@ -194,9 +228,16 @@ export default function DossierPanel({
   onExportAudit,
 }) {
   const [narrativeExpanded, setNarrativeExpanded] = useState(true);
+
+  const disposition = result?.disposition_title;
+  const claims = Array.isArray(result?.claims) ? result.claims : [];
+  const quarantinedClaims = Array.isArray(result?.quarantined_claims) ? result.quarantined_claims : [];
+  const summary = result?.summary || (isInvestigating ? 'Synthesizing evidence claims with Gemini reasoning model...' : 'Awaiting investigation run...');
   const isInjectionScenario =
-    result.disposition_title === DISPOSITION.EMERGENCY ||
-    (result.quarantined_claims && result.quarantined_claims.length > 0);
+    disposition === DISPOSITION.EMERGENCY ||
+    quarantinedClaims.length > 0;
+  const workflowType = result?.workflow_type === 'validated_deterministic' ? 'Validated' : (result?.workflow_type ? 'Baseline' : 'Standby');
+  const riskLevel = result?.preliminary_risk_level || (isInvestigating ? 'ANALYZING' : 'PENDING');
 
   return (
     <section className="bg-slate-900/60 border border-slate-800 rounded-xl p-5 flex flex-col shadow-xl">
@@ -218,10 +259,10 @@ export default function DossierPanel({
       <div className="mt-4 space-y-3.5 flex-1 overflow-y-auto max-h-[640px] pr-0.5">
 
         {/* Disposition Header */}
-        <DispositionHeader disposition={result.disposition_title} />
+        <DispositionHeader disposition={disposition} isInvestigating={isInvestigating} />
 
         {/* Injection Alert Banner for Scenario C */}
-        {isInjectionScenario && result.disposition_title === DISPOSITION.EMERGENCY && (
+        {isInjectionScenario && disposition === DISPOSITION.EMERGENCY && (
           <div className="p-3 rounded-lg bg-rose-950/30 border border-rose-700/60 flex items-start gap-2.5 animate-fade-in">
             <AlertTriangle className="w-4 h-4 text-rose-400 flex-shrink-0 mt-0.5" />
             <div>
@@ -242,7 +283,7 @@ export default function DossierPanel({
               Draft Regulatory Narrative
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-[10px] text-cyan-400 font-mono">Gemini 2.5 Synth</span>
+              <span className="text-[10px] text-cyan-400 font-mono">Gemini Synthesis</span>
               <button
                 onClick={() => setNarrativeExpanded(!narrativeExpanded)}
                 className="text-slate-500 hover:text-slate-300 transition-colors"
@@ -255,8 +296,8 @@ export default function DossierPanel({
             </div>
           </div>
           {narrativeExpanded && (
-            <p className="text-[11px] text-slate-300 leading-relaxed animate-fade-in">
-              {result.summary}
+            <p className={`text-[11px] leading-relaxed animate-fade-in ${isInvestigating ? 'text-slate-500 italic' : 'text-slate-300'}`}>
+              {summary}
             </p>
           )}
         </div>
@@ -264,28 +305,40 @@ export default function DossierPanel({
         {/* Verified Evidence Bindings */}
         <div className="p-3.5 bg-slate-950/80 rounded-lg border border-slate-800">
           <div className="flex items-center gap-2 text-[10px] uppercase font-semibold text-slate-500 tracking-wider mb-2.5">
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-            Verified Evidence Bindings ({result.claims.length})
+            {isInvestigating ? (
+              <Loader2 className="w-3.5 h-3.5 text-cyan-400 animate-spin" />
+            ) : (
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+            )}
+            Verified Evidence Bindings ({claims.length})
           </div>
-          <div className="space-y-2">
-            {result.claims.map((claim) => (
-              <ClaimRow key={claim.claim_id} claim={claim} />
-            ))}
-          </div>
+          {claims.length > 0 ? (
+            <div className="space-y-2">
+              {claims.map((claim) => (
+                <ClaimRow key={claim.claim_id} claim={claim} />
+              ))}
+            </div>
+          ) : (
+            <p className="text-[11px] text-slate-500 italic">
+              {isInvestigating
+                ? 'Validating telemetry and generating grounded claims...'
+                : 'No verified evidence claims generated yet.'}
+            </p>
+          )}
         </div>
 
         {/* Quarantined Claims Section — The Winning Differentiator */}
-        {result.quarantined_claims && result.quarantined_claims.length > 0 && (
+        {quarantinedClaims.length > 0 && (
           <div className="p-3.5 bg-rose-950/20 rounded-lg border border-rose-800/60 animate-fade-in">
             <div className="flex items-center gap-2 text-rose-400 text-[11px] font-bold uppercase tracking-wider mb-2">
               <Lock className="w-3.5 h-3.5 flex-shrink-0" />
-              <span>Grounding Gate — Quarantined Claims ({result.quarantined_claims.length})</span>
+              <span>Grounding Gate — Quarantined Claims ({quarantinedClaims.length})</span>
             </div>
             <p className="text-[10px] text-rose-300/80 mb-3 leading-snug">
               The following assertions were removed from this regulatory dossier because they failed deterministic validation or originated from adversarial injection tokens:
             </p>
             <div className="space-y-2">
-              {result.quarantined_claims.map((qc) => (
+              {quarantinedClaims.map((qc) => (
                 <QuarantinedClaimRow key={qc.id} qc={qc} />
               ))}
             </div>
@@ -298,24 +351,25 @@ export default function DossierPanel({
             <div>
               <div className="text-[9px] uppercase font-semibold text-slate-600 tracking-wider">Workflow</div>
               <div className="text-[10px] font-mono text-slate-400 mt-0.5">
-                {result.workflow_type === 'validated_deterministic' ? 'Validated' : 'Baseline'}
+                {workflowType}
               </div>
             </div>
             <div>
               <div className="text-[9px] uppercase font-semibold text-slate-600 tracking-wider">Risk Level</div>
               <div className={`text-[10px] font-mono font-bold mt-0.5 ${
-                result.preliminary_risk_level === 'LOW'    ? 'text-emerald-400' :
-                result.preliminary_risk_level === 'MEDIUM' ? 'text-amber-400'   : 'text-rose-400'
+                riskLevel === 'LOW'    ? 'text-emerald-400' :
+                riskLevel === 'MEDIUM' ? 'text-amber-400'   :
+                riskLevel === 'HIGH' || riskLevel === 'CRITICAL' ? 'text-rose-400' : 'text-slate-400'
               }`}>
-                {result.preliminary_risk_level}
+                {riskLevel}
               </div>
             </div>
             <div>
               <div className="text-[9px] uppercase font-semibold text-slate-600 tracking-wider">Claims</div>
               <div className="text-[10px] font-mono text-slate-400 mt-0.5">
-                {result.claims.length} verified
-                {result.quarantined_claims?.length > 0
-                  ? ` · ${result.quarantined_claims.length} quarantined`
+                {claims.length} verified
+                {quarantinedClaims.length > 0
+                  ? ` · ${quarantinedClaims.length} quarantined`
                   : ''}
               </div>
             </div>

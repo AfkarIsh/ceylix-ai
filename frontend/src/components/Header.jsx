@@ -20,7 +20,6 @@ import {
   History,
   Key,
   Presentation,
-  Zap,
   Plus,
 } from "lucide-react";
 import { BACKEND_STATUS } from "../types.js";
@@ -38,15 +37,15 @@ function BackendStatusBadge({ status }) {
       </span>
     );
   }
-  if (status === BACKEND_STATUS.OFFLINE_FALLBACK) {
+  if (status === BACKEND_STATUS.DISCONNECTED) {
     return (
       <span
-        className="hidden sm:inline-flex items-center gap-1.5 text-[10px] font-semibold text-amber-400 bg-amber-950/40 border border-amber-800/60 px-2 py-0.5 rounded tracking-wide"
-        title="Backend unreachable — deterministic benchmark simulation active"
+        className="hidden sm:inline-flex items-center gap-1.5 text-[10px] font-semibold text-rose-400 bg-rose-950/40 border border-rose-800/60 px-2 py-0.5 rounded tracking-wide"
+        title="Backend unreachable — live FastAPI service offline"
       >
-        <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+        <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />
         <WifiOff className="w-3 h-3" />
-        Offline Simulation Mode (Deterministic Benchmark)
+        Backend Offline
       </span>
     );
   }
@@ -114,8 +113,6 @@ export default function Header({
   onOpenHistory,
   customApiKey,
   historyCount = 0,
-  isDemoMode = false,
-  onToggleDemoMode,
   onResetWorkspace,
 }) {
   return (
@@ -144,32 +141,6 @@ export default function Header({
 
         {/* ── Actions ───────────────────────────────────────────────── */}
         <div className="flex items-center gap-2.5 flex-shrink-0">
-          {/* Demo / Live Mode Toggle */}
-          <button
-            onClick={onToggleDemoMode}
-            title={isDemoMode ? "Click to switch to Live API Mode" : "Click to switch to Demo Mode"}
-            className={`relative inline-flex items-center gap-2 text-xs font-bold px-3.5 py-1.5 rounded-lg border transition-all duration-200 shadow-md ${
-              isDemoMode
-                ? "bg-amber-950/80 border-amber-500/60 text-amber-300 hover:bg-amber-900/80 hover:border-amber-400 shadow-amber-950/60"
-                : "bg-emerald-950/80 border-emerald-500/60 text-emerald-300 hover:bg-emerald-900/80 hover:border-emerald-400 shadow-emerald-950/60"
-            }`}
-          >
-            {isDemoMode ? (
-              <Zap className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
-            ) : (
-              <Wifi className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
-            )}
-            <span className="tracking-wide">
-              {isDemoMode ? "⚡ DEMO MODE (MOCK)" : "🟢 LIVE API MODE"}
-            </span>
-            <span
-              className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                isDemoMode
-                  ? "bg-amber-400 animate-pulse"
-                  : "bg-emerald-400 animate-pulse"
-              }`}
-            />
-          </button>
 
           {/* History Drawer Trigger */}
           <button

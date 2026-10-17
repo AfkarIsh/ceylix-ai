@@ -85,7 +85,7 @@ def run_experiment(
     baseline_reports: List[InvestigationReport] = []
     start_time_a = time.time()
     for idx, case in enumerate(cases, 1):
-        report = run_baseline_workflow(case, force_simulation=force_simulation)
+        report = run_baseline_workflow(case)
         baseline_reports.append(report)
         print(f"  [{idx:02d}/{len(cases):02d}] {case.case_id} ({case.category:<30}) -> Risk: {report.preliminary_risk_level:<6} | Decision: {report.decision} ({report.latency_ms:.1f}ms)")
     total_time_a = time.time() - start_time_a
@@ -95,7 +95,7 @@ def run_experiment(
     validated_reports: List[InvestigationReport] = []
     start_time_b = time.time()
     for idx, case in enumerate(cases, 1):
-        report = run_validated_workflow(case, force_simulation=force_simulation)
+        report = run_validated_workflow(case)
         validated_reports.append(report)
         reasons_str = f" [{','.join(report.abstention_reasons[:2])}]" if report.abstention_reasons else ""
         print(f"  [{idx:02d}/{len(cases):02d}] {case.case_id} ({case.category:<30}) -> Risk: {report.preliminary_risk_level:<6} | Decision: {report.decision}{reasons_str} ({report.latency_ms:.1f}ms)")

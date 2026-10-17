@@ -2,8 +2,8 @@
  * App.jsx — Ceylix AI Incident Workbench Orchestrator
  * ────────────────────────────────────────────────────────────────
  * Comprehensive state orchestrator:
- *   - Demo Mode vs Live API Mode toggle (persisted to localStorage)
- *   - Live FastAPI backend enforcement — visible error banner on failure
+ *   - Permanent Live API Mode — strict FastAPI backend enforcement
+ *   - Visible persistent error banner when backend service is unreachable
  *   - 5-second health check polling for dynamic header status badge
  *   - Custom Gemini API key injection (X-Custom-Gemini-Key header)
  *   - Risk Sensitivity Mode controls (Standard vs Strict Compliance)
@@ -11,7 +11,7 @@
  *   - Settings & AST evidence gate status modal
  *   - Firestore audit persistence & export
  */
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { Component, useState, useEffect, useCallback, useRef } from "react";
 import Header from "./components/Header.jsx";
 import TelemetryPanel, { GeminiHeroView } from "./components/TelemetryPanel.jsx";
 import AgentStepperPanel from "./components/AgentStepperPanel.jsx";
@@ -27,6 +27,7 @@ import {
   SENSITIVITY_MODE,
   mapDecisionToDisposition,
   riskLevelToScore,
+  classifyScenario,
 } from "./types.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -36,19 +37,55 @@ const BACKEND_URL =
   (typeof import.meta !== "undefined" && import.meta.env?.VITE_BACKEND_URL) ||
   "http://127.0.0.1:8000";
 
-const DEFAULT_SCENARIO_KEY = "scenarioB"; // High-risk demo on initial load
+const DEFAULT_SCENARIO_KEY = "scenarioB"; // Default benchmark scenario on initial load
 const HEALTH_POLL_INTERVAL_MS = 5000;
-const ERROR_BANNER_DISMISS_MS = 6000;
-const DEMO_MODE_SIMULATED_DELAY_MS = 400;
+
+class WorkbenchErrorBoundary extends Component {
+  state = { hasError: false };
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error("[Ceylix] Workbench rendering error:", error, errorInfo);
+  }
+
+  handleReset = () => {
+    this.setState({ hasError: false });
+  };
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <main className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-6">
+          <section className="w-full max-w-md rounded-2xl border border-rose-800/70 bg-slate-900 p-6 text-center shadow-2xl">
+            <h1 className="text-lg font-semibold text-rose-300">
+              Error caught in workbench state
+            </h1>
+            <p className="mt-2 text-sm text-slate-400">
+              The current investigation could not be rendered safely.
+            </p>
+            <button
+              type="button"
+              onClick={this.handleReset}
+              className="mt-5 rounded-lg border border-cyan-500/60 bg-cyan-950/60 px-4 py-2 text-sm font-semibold text-cyan-200 transition-colors hover:bg-cyan-900/70 focus:outline-none focus:ring-2 focus:ring-cyan-400/60"
+            >
+              Click here to reset session
+            </button>
+          </section>
+        </main>
+      );
+    }
+
+    return this.props.children;
+  }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Backend response → UI result adapter
+// Backend response → UI result adapter (Pure live mapping)
 // ─────────────────────────────────────────────────────────────────────────────
-function adaptBackendResponse(data, elapsedMs, selectedKey) {
-  const fallbackClaims = PRESET_SCENARIOS[selectedKey]?.mockResult?.claims || [];
-  const fallbackQuarantined =
-    PRESET_SCENARIOS[selectedKey]?.mockResult?.quarantined_claims || [];
-
+function adaptBackendResponse(data, elapsedMs) {
   const hasUntrustedInjection =
     data.abstention_reasons?.some((r) =>
       /injection|untrusted|adversarial|override/i.test(r)
@@ -72,40 +109,79 @@ function adaptBackendResponse(data, elapsedMs, selectedKey) {
     (r) =>
       (r.rule_name?.toLowerCase().includes("sanction") ||
         r.rule_name?.toLowerCase().includes("ofac") ||
-        r.rule_id === "RULE_OFAC_SANCTIONS") &&
+        r.rule_id === "RULE_OFAC_SANCTIONS" ||
+        r.rule_name?.toLowerCase().includes("jurisdiction")) &&
       !r.passed
   );
   const kycFailed = rules.some(
     (r) =>
       (r.rule_name?.toLowerCase().includes("kyc") ||
+        r.rule_name?.toLowerCase().includes("velocity") ||
         r.rule_id === "RULE_KYC_VELOCITY") &&
       !r.passed
   );
 
-  // Build claims from backend or fall back to mock
-  const claims =
-    data.claims && data.claims.length > 0
-      ? data.claims.map((c) => ({
-          claim_id: c.claim_id,
-          text: c.text,
-          tool: c.evidence_ids?.[0]
-            ? `TOOL_${c.evidence_ids[0].replace(/-/g, "_").toUpperCase()}`
-            : "TOOL_CORE_KYC",
-          evidence_ref: c.evidence_ids?.[0] || "RULE-VAL-01",
-          status: c.support_status === "supported" ? "verified" : "flagged",
-        }))
-      : fallbackClaims;
+  // Build verified claims strictly from supported claims in live response
+  const claims = (data.claims || [])
+    .filter((c) => c.support_status === "supported")
+    .map((c) => ({
+      claim_id: c.claim_id,
+      text: c.text,
+      tool: c.evidence_ids?.[0]
+        ? `TOOL_${c.evidence_ids[0].replace(/[^A-Za-z0-9]/g, "_").toUpperCase()}`
+        : "TOOL_CORE_KYC",
+      evidence_ref: c.evidence_ids?.[0] || "RULE-VAL-01",
+      status: "verified",
+    }));
 
-  // Build quarantined from warnings or injection abstention reasons
-  const quarantinedClaims = hasUntrustedInjection
-    ? (data.warnings || []).map((w, idx) => ({
-        id: `QC-BE-0${idx + 1}`,
-        assertion: w,
-        reason:
-          "Assertion failed deterministic validation — removed from regulatory dossier.",
-        source_token: "backend_warning_flag",
-      }))
-    : fallbackQuarantined;
+  // Build quarantined claims from unverified/unsupported/conflicting claims and warnings
+  const quarantinedClaims = [];
+
+  // 1. Quarantined claims from claims breakdown
+  if (data.claims && Array.isArray(data.claims)) {
+    data.claims.forEach((c, idx) => {
+      if (c.support_status && c.support_status !== "supported") {
+        quarantinedClaims.push({
+          id: `QC-CLM-${c.claim_id || idx + 1}`,
+          source_token: c.claim_type || "unverified_assertion",
+          assertion: c.text,
+          reason:
+            c.validation_notes ||
+            `Deterministic evidence validator marked claim status as '${c.support_status}'.`,
+        });
+      }
+    });
+  }
+
+  // 2. Quarantined items from abstention reasons
+  if (data.abstention_reasons && Array.isArray(data.abstention_reasons)) {
+    data.abstention_reasons.forEach((r, idx) => {
+      if (/injection|untrusted|adversarial|override|stale|conflict|unsupported/i.test(r)) {
+        quarantinedClaims.push({
+          id: `QC-REASON-0${idx + 1}`,
+          source_token: "abstention_defect",
+          assertion: r,
+          reason:
+            "Policy review boundary triggered — assertion quarantined from evidence dossier.",
+        });
+      }
+    });
+  }
+
+  // 3. Quarantined items from validation warnings
+  if (data.warnings && Array.isArray(data.warnings)) {
+    data.warnings.forEach((w, idx) => {
+      if (/stale|conflict|injection|untrusted|missing/i.test(w)) {
+        quarantinedClaims.push({
+          id: `QC-WARN-0${idx + 1}`,
+          source_token: "evidence_validator_warning",
+          assertion: w,
+          reason:
+            "Deterministic evidence validator detected anomaly or missing baseline proof.",
+        });
+      }
+    });
+  }
 
   return {
     workflow_type: data.workflow_type || "validated_deterministic",
@@ -232,7 +308,7 @@ function ErrorBanner({ message, onDismiss }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // App Component
 // ─────────────────────────────────────────────────────────────────────────────
-export default function App() {
+function AppContent() {
   const initialScenario = PRESET_SCENARIOS[DEFAULT_SCENARIO_KEY];
 
   // ── State ────────────────────────────────────────────────────────────────
@@ -241,65 +317,36 @@ export default function App() {
   const [activeCaseId, setActiveCaseId] = useState(initialScenario.case_id);
   const [isEditingPayload, setIsEditingPayload] = useState(false);
   const [isInvestigating, setIsInvestigating] = useState(false);
-  const [investigationResult, setInvestigationResult] = useState({
-    ...initialScenario.mockResult,
-  });
+  const [investigationResult, setInvestigationResult] = useState(null);
   const [backendStatus, setBackendStatus] = useState(BACKEND_STATUS.TESTING);
-  const [lastExecutionTime, setLastExecutionTime] = useState(
-    `${initialScenario.mockResult.latency_ms.toLocaleString()} ms`
-  );
+  const [lastExecutionTime, setLastExecutionTime] = useState("0 ms");
   const [firestoreSyncState, setFirestoreSyncState] = useState(SYNC_STATE.IDLE);
   const [firestoreSyncTs, setFirestoreSyncTs] = useState(null);
 
   // ── Error Banner ─────────────────────────────────────────────────────────
   const [errorBanner, setErrorBanner] = useState(null);
-  const errorBannerTimerRef = useRef(null);
 
   const showErrorBanner = useCallback((msg) => {
     setErrorBanner(msg);
-    clearTimeout(errorBannerTimerRef.current);
-    errorBannerTimerRef.current = setTimeout(
-      () => setErrorBanner(null),
-      ERROR_BANNER_DISMISS_MS
-    );
   }, []);
 
   const dismissErrorBanner = useCallback(() => {
-    clearTimeout(errorBannerTimerRef.current);
     setErrorBanner(null);
   }, []);
-
-  // ── Demo / Live Mode ─────────────────────────────────────────────────────
-  const [isDemoMode, setIsDemoMode] = useState(() => {
-    const stored = localStorage.getItem(STORAGE_KEYS.DEMO_MODE);
-    return stored === null ? false : stored === "true";
-  });
 
   // ── Gemini Cognitive Model Tier & Hero Mode ─────────────────────────────
   const [selectedModel, setSelectedModel] = useState("gemini-2.5-flash");
   const [hasStartedInvestigation, setHasStartedInvestigation] = useState(false);
-
-  // Track mount so the auto-triage useEffect doesn't fire on initial render
-  const hasToggledRef = useRef(false);
+  const [workspaceResetKey, setWorkspaceResetKey] = useState(0);
 
   const handleResetWorkspace = useCallback(() => {
     setHasStartedInvestigation(false);
     setInvestigationResult(null);
+    setWorkspaceResetKey((key) => key + 1);
     setIsEditingPayload(false);
     setFirestoreSyncState(SYNC_STATE.IDLE);
     setFirestoreSyncTs(null);
   }, []);
-
-  const handleToggleDemoMode = useCallback(() => {
-    // Always clear any stale error banners when the user manually switches mode
-    dismissErrorBanner();
-    setIsDemoMode((prev) => {
-      const next = !prev;
-      localStorage.setItem(STORAGE_KEYS.DEMO_MODE, String(next));
-      hasToggledRef.current = true; // mark that user has explicitly toggled
-      return next;
-    });
-  }, [dismissErrorBanner]);
 
   // ── Enterprise Settings & Controls State ─────────────────────────────────
   const [customApiKey, setCustomApiKey] = useState(
@@ -317,21 +364,10 @@ export default function App() {
     } catch {
       return [];
     }
+
   });
 
   const abortRef = useRef(null);
-
-  // ── Auto-triage on switch to Live Mode ───────────────────────────────────
-  // When the user explicitly toggles FROM Demo TO Live, immediately fire a
-  // live triage so they see real results right away instead of stale demo data.
-  // We skip the initial mount by checking hasToggledRef.
-  useEffect(() => {
-    if (!hasToggledRef.current) return; // skip mount
-    if (!isDemoMode && !isInvestigating) {
-      handleRunTriage();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isDemoMode]);
 
   // ── Health check — 5-second polling interval ─────────────────────────────
   useEffect(() => {
@@ -342,9 +378,12 @@ export default function App() {
       fetch(`${BACKEND_URL}${API.HEALTH}`, {
         signal: AbortSignal.timeout(4000),
       })
-        .then((res) => res.json())
+        .then((res) => {
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          return res.json();
+        })
         .then(() => { if (isMounted) setBackendStatus(BACKEND_STATUS.CONNECTED); })
-        .catch(() => { if (isMounted) setBackendStatus(BACKEND_STATUS.OFFLINE_FALLBACK); });
+        .catch(() => { if (isMounted) setBackendStatus(BACKEND_STATUS.DISCONNECTED); });
     };
 
     checkHealth();
@@ -364,6 +403,7 @@ export default function App() {
     } else {
       localStorage.removeItem(STORAGE_KEYS.CUSTOM_GEMINI_KEY);
     }
+
   }, []);
 
   // ── Change Sensitivity Mode ──────────────────────────────────────────────
@@ -372,28 +412,8 @@ export default function App() {
     localStorage.setItem(STORAGE_KEYS.SENSITIVITY_MODE, newMode);
   }, []);
 
-  // ── Quick Scenario Selector ──────────────────────────────────────────────
-  const handleSelectScenario = useCallback((key) => {
-    const scn = PRESET_SCENARIOS[key];
-    if (!scn) return;
-    setSelectedScenarioKey(key);
-    setActivePayload({ ...scn.payload });
-    setActiveCaseId(scn.case_id);
-    setInvestigationResult({ ...scn.mockResult });
-    setLastExecutionTime(`${scn.mockResult.latency_ms.toLocaleString()} ms`);
-    setIsEditingPayload(false);
-    setFirestoreSyncState(SYNC_STATE.IDLE);
-    setFirestoreSyncTs(null);
-    setHasStartedInvestigation(true);
-  }, []);
-
-  // ── Payload field change ─────────────────────────────────────────────────
-  const handlePayloadChange = useCallback((field, value) => {
-    setActivePayload((prev) => ({ ...prev, [field]: value }));
-  }, []);
-
-  // ── Run Forensic Triage ──────────────────────────────────────────────────
-  const handleRunTriage = useCallback(async (overridePayload = null) => {
+  // ── Run Forensic Triage (Strict Live API Execution) ────────────────────────
+  const handleRunTriage = useCallback(async (overridePayload = null, overrideCaseId = null, overrideKey = null) => {
     if (isInvestigating) return;
     setIsInvestigating(true);
     setHasStartedInvestigation(true);
@@ -410,9 +430,10 @@ export default function App() {
     let finalResult = null;
 
     const payloadToUse = overridePayload || activePayload;
-    const caseIdToUse = overridePayload?.transaction_id
+    const caseIdToUse = overrideCaseId || (overridePayload?.transaction_id
       ? `CASE-${overridePayload.transaction_id.replace(/^TX-/, '')}`
-      : activeCaseId;
+      : activeCaseId);
+    const keyToUse = overrideKey || selectedScenarioKey;
 
     if (overridePayload) {
       setActivePayload({ ...overridePayload });
@@ -420,77 +441,9 @@ export default function App() {
     }
 
     try {
-      // ── DEMO MODE PATH ───────────────────────────────────────────────────
-      if (isDemoMode) {
-        await new Promise((resolve) =>
-          setTimeout(resolve, DEMO_MODE_SIMULATED_DELAY_MS)
-        );
-        if (signal.aborted) return;
-        const isHighRisk =
-          payloadToUse.amount >= 10000 ||
-          payloadToUse.counterparty_country === "IR" ||
-          payloadToUse.counterparty_country === "KP";
-
-        const mockResult = overridePayload
-          ? {
-              workflow_type: "validated_deterministic",
-              preliminary_risk_level: isHighRisk ? "HIGH" : "LOW",
-              calibrated_score: isHighRisk ? 94 : 12,
-              system1_disposition: isHighRisk ? "DISPATCH_INVESTIGATION" : "PASS",
-              system1_model: "Gemini 2.5 Flash",
-              system2_model: isHighRisk
-                ? "Gemini 2.5 Pro (Deep Grounding)"
-                : "Bypassed (Instant Clear)",
-              grounding_status: "FULLY_GROUNDED",
-              latency_ms: 185,
-              decision: isHighRisk
-                ? "ABSTAIN_FOR_HUMAN_REVIEW"
-                : "RELEASE_WITH_PROVENANCE",
-              disposition_title: isHighRisk
-                ? "ESCALATE_FOR_ANALYST_REVIEW"
-                : "DISMISS_FALSE_POSITIVE",
-              summary: `Forensic investigation of wire ${payloadToUse.transaction_id} ($${payloadToUse.amount} ${payloadToUse.currency}) to ${payloadToUse.counterparty_name} in ${payloadToUse.counterparty_country}.`,
-              claims: [],
-              quarantined_claims: [],
-              probes: {
-                ofac_sdn: {
-                  status:
-                    payloadToUse.counterparty_country === "IR" ||
-                    payloadToUse.counterparty_country === "KP"
-                      ? "MATCHED"
-                      : "CLEAR",
-                  detail:
-                    payloadToUse.counterparty_country === "IR" ||
-                    payloadToUse.counterparty_country === "KP"
-                      ? "Sanctions hit detected by rule engine"
-                      : "0 hits against OFAC SDN & Consolidated List",
-                  verified: true,
-                },
-                ip_geo: {
-                  status: "CLEAR",
-                  detail: "IP geolocation resolved via backend rule engine",
-                  verified: true,
-                },
-                core_kyc: {
-                  status: "CLEAR",
-                  detail: "Customer KYC profile within normal parameters",
-                  verified: true,
-                },
-              },
-            }
-          : { ...PRESET_SCENARIOS[selectedScenarioKey].mockResult };
-
-        const elapsed = Math.round(performance.now() - startTime);
-        setLastExecutionTime(`${elapsed.toLocaleString()} ms (demo)`);
-        setInvestigationResult(mockResult);
-        finalResult = mockResult;
-        return; // history append handled in finally
-      }
-
-      // ── LIVE MODE PATH ───────────────────────────────────────────────────
       const investigationCase = buildInvestigationCase(
         payloadToUse,
-        selectedScenarioKey,
+        keyToUse,
         caseIdToUse,
         sensitivityMode
       );
@@ -500,94 +453,63 @@ export default function App() {
         ...(customApiKey ? { "X-Custom-Gemini-Key": customApiKey } : {}),
       };
 
-      const attemptFetch = async (url) => {
-        const res = await fetch(url, {
-          method: "POST",
-          headers: requestHeaders,
-          body: JSON.stringify(investigationCase),
-          signal,
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-        return res.json();
-      };
+      const res = await fetch(`${BACKEND_URL}${API.INVESTIGATE_LIVE}`, {
+        method: "POST",
+        headers: requestHeaders,
+        body: JSON.stringify(investigationCase),
+        signal,
+      });
 
-      let data = null;
-
-      // Attempt 1: Live Gemini endpoint
-      if (backendStatus === BACKEND_STATUS.CONNECTED) {
-        try {
-          data = await attemptFetch(`${BACKEND_URL}${API.INVESTIGATE_LIVE}`);
-          setBackendStatus(BACKEND_STATUS.CONNECTED);
-        } catch (liveErr) {
-          if (signal.aborted) throw liveErr;
-          console.warn(
-            "[Ceylix] Live Gemini call failed, trying simulate=true:",
-            liveErr.message
-          );
-          // Attempt 2: Backend deterministic simulation
-          data = await attemptFetch(`${BACKEND_URL}${API.INVESTIGATE_SIM}`);
-        }
-      } else {
-        // Backend known offline — try simulate route directly
-        data = await attemptFetch(`${BACKEND_URL}${API.INVESTIGATE_SIM}`);
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.detail || `Server returned HTTP ${res.status}: ${res.statusText}`);
       }
+
+      const data = await res.json();
+      setBackendStatus(BACKEND_STATUS.CONNECTED);
 
       const elapsed = Math.round(performance.now() - startTime);
       setLastExecutionTime(`${elapsed.toLocaleString()} ms`);
 
-      const adapted = adaptBackendResponse(data, elapsed, selectedScenarioKey);
+      const adapted = adaptBackendResponse(data, elapsed);
       setInvestigationResult(adapted);
       finalResult = adapted;
 
     } catch (err) {
       if (signal.aborted) return;
 
-      // ── LIVE MODE FAILURE — surface error banner, auto-switch to Demo Mode
-      console.error("[Ceylix] Backend unreachable — network error details:", err);
-      setBackendStatus(BACKEND_STATUS.OFFLINE_FALLBACK);
+      console.error("[Ceylix] Live backend request failed:", err);
+      setBackendStatus(BACKEND_STATUS.DISCONNECTED);
+      setInvestigationResult(null);
 
       showErrorBanner(
-        "[ERROR: Live Backend Unreachable. Please start Uvicorn server on port 8000] " +
-          `— Switching to Demo Mode automatically. (${err.message})`
+        `[ERROR: Backend Service Unreachable. Please verify Uvicorn server is running on port 8000] (${err.message})`
       );
-
-      // Graceful degradation: auto-enable Demo Mode with clear user-visible warning
-      setIsDemoMode(true);
-      localStorage.setItem(STORAGE_KEYS.DEMO_MODE, "true");
-
-      const elapsed = Math.round(performance.now() - startTime);
-      const mockLatency =
-        PRESET_SCENARIOS[selectedScenarioKey]?.mockResult?.latency_ms || 1800;
-      setLastExecutionTime(`${(elapsed + mockLatency).toLocaleString()} ms (auto-demo)`);
-      const fallback = { ...PRESET_SCENARIOS[selectedScenarioKey].mockResult };
-      setInvestigationResult(fallback);
-      finalResult = fallback;
 
     } finally {
       setIsInvestigating(false);
 
-      // Append run to case history
+      // Append run to case history if successful
       if (finalResult) {
         const historyItem = {
-          case_id: activeCaseId,
-          scenario_name:
-            PRESET_SCENARIOS[selectedScenarioKey]?.name || activeCaseId,
-          amount: activePayload.amount,
-          currency: activePayload.currency || "USD",
+          case_id: caseIdToUse,
+          scenario_name: classifyScenario(payloadToUse, finalResult),
+          amount: payloadToUse.amount,
+          currency: payloadToUse.currency || "USD",
           timestamp: new Date().toISOString(),
           disposition_title: finalResult.disposition_title,
           calibrated_score: finalResult.calibrated_score,
           preliminary_risk_level: finalResult.preliminary_risk_level,
           grounding_status: finalResult.grounding_status,
           sensitivity_mode: sensitivityMode,
-          payload: { ...activePayload },
+          payload: { ...payloadToUse },
           result: { ...finalResult },
         };
 
         setCaseHistory((prev) => {
           const updated = [
             historyItem,
-            ...prev.filter((p) => p.case_id !== activeCaseId),
+            ...prev.filter((p) => p.case_id !== caseIdToUse),
           ].slice(0, 30);
           try {
             localStorage.setItem(STORAGE_KEYS.CASE_HISTORY, JSON.stringify(updated));
@@ -603,13 +525,30 @@ export default function App() {
     selectedScenarioKey,
     activeCaseId,
     sensitivityMode,
-    backendStatus,
     customApiKey,
     isInvestigating,
-    isDemoMode,
     dismissErrorBanner,
     showErrorBanner,
   ]);
+
+  // ── Quick Scenario Selector (Triggers live triage immediately) ───────────
+  const handleSelectScenario = useCallback((key) => {
+    const scn = PRESET_SCENARIOS[key];
+    if (!scn) return;
+    setSelectedScenarioKey(key);
+    setActivePayload({ ...scn.payload });
+    setActiveCaseId(scn.case_id);
+    setIsEditingPayload(false);
+    setFirestoreSyncState(SYNC_STATE.IDLE);
+    setFirestoreSyncTs(null);
+    setHasStartedInvestigation(true);
+    handleRunTriage(scn.payload, scn.case_id, key);
+  }, [handleRunTriage]);
+
+  // ── Payload field change ─────────────────────────────────────────────────
+  const handlePayloadChange = useCallback((field, value) => {
+    setActivePayload((prev) => ({ ...prev, [field]: value }));
+  }, []);
 
   // ── Select Historical Case from Drawer ───────────────────────────────────
   const handleSelectHistoricalCase = useCallback((item) => {
@@ -736,8 +675,6 @@ export default function App() {
         onOpenHistory={() => setIsHistoryOpen(true)}
         customApiKey={customApiKey}
         historyCount={caseHistory.length}
-        isDemoMode={isDemoMode}
-        onToggleDemoMode={handleToggleDemoMode}
         onResetWorkspace={handleResetWorkspace}
       />
 
@@ -752,6 +689,7 @@ export default function App() {
             onSelectScenario={handleSelectScenario}
             scenarios={PRESET_SCENARIOS}
             payload={activePayload}
+            resetKey={workspaceResetKey}
           />
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
@@ -766,13 +704,12 @@ export default function App() {
               onEditToggle={() => setIsEditingPayload((v) => !v)}
               onPayloadChange={handlePayloadChange}
               onRunTriage={handleRunTriage}
-              isDemoMode={isDemoMode}
-              onToggleDemoMode={handleToggleDemoMode}
               selectedModel={selectedModel}
               onChangeModel={setSelectedModel}
               onSelectScenario={handleSelectScenario}
               scenarios={PRESET_SCENARIOS}
               onResetWorkspace={handleResetWorkspace}
+              resetKey={workspaceResetKey}
             />
 
             {/* Panel 2: Agent Stepper & Grounding Gauge */}
@@ -786,6 +723,7 @@ export default function App() {
             {/* Panel 3: Evidence Dossier & Quarantine */}
             <DossierPanel
               result={investigationResult}
+              isInvestigating={isInvestigating}
               caseId={activeCaseId}
               payload={activePayload}
               backendStatus={backendStatus}
@@ -817,7 +755,7 @@ export default function App() {
         onSaveCustomKey={handleSaveCustomKey}
       />
 
-      {/* Footer — persistent mode indicator */}
+      {/* Footer — persistent live API indicator */}
       <footer className="border-t border-slate-800/80 bg-slate-950 px-6 py-3 text-center text-[11px] text-slate-600">
         <div className="max-w-[1400px] mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
           <div className="font-mono">
@@ -825,27 +763,26 @@ export default function App() {
           </div>
           <div className="flex items-center gap-4 font-mono text-[10px]">
             <span className="flex items-center gap-1.5">
-              {isDemoMode ? (
-                <>
-                  <span className="text-amber-400 font-semibold">⚡ Demo Mode Active</span>
-                  <span className="text-slate-600">(Instant Simulation)</span>
-                </>
-              ) : (
-                <>
-                  <span className="text-emerald-400 font-semibold">🟢 Live API Connected</span>
-                  <span className="text-slate-600">(FastAPI + Gemini)</span>
-                </>
-              )}
+              <span className="text-emerald-400 font-semibold">🟢 Live API Pipeline</span>
+              <span className="text-slate-600">(FastAPI + Google Gemini)</span>
             </span>
             <span className="text-slate-700">·</span>
-            <span className="text-slate-700">Vertex AI · Gemini 2.5 Flash / Pro</span>
+            <span className="text-slate-700">Vertex AI / Google GenAI SDK</span>
             <span className="text-slate-700">·</span>
             <span className="text-slate-700">Deterministic AST Claim Validation</span>
             <span className="text-slate-700">·</span>
-            <span className="text-slate-700">Google Cloud Run</span>
+            <span className="text-slate-700">Production Mode</span>
           </div>
         </div>
       </footer>
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <WorkbenchErrorBoundary>
+      <AppContent />
+    </WorkbenchErrorBoundary>
   );
 }

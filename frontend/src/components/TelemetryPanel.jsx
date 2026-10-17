@@ -5,7 +5,7 @@
  *   - Hero Landing State: Centered greeting + long pill chat bar + quick chips.
  *   - Docked Workbench State: Docked pill bar in Panel 1 + telemetry baseline + sensitivity mode.
  */
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   Database,
   Edit3,
@@ -123,10 +123,15 @@ export function GeminiPillBar({
   onSelectScenario,
   scenarios = PRESET_SCENARIOS,
   onResetWorkspace,
+  resetKey = 0,
   variant = 'docked', // 'hero' | 'docked'
 }) {
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
   const [isPresetDropdownOpen, setIsPresetDropdownOpen] = useState(false);
+
+  useEffect(() => {
+    setInputText('');
+  }, [resetKey, setInputText]);
 
   const activeModelObj = useMemo(
     () => AVAILABLE_MODELS.find((m) => m.id === selectedModel) || AVAILABLE_MODELS[0],
@@ -321,24 +326,34 @@ export function GeminiHeroView({
   onSelectScenario,
   scenarios = PRESET_SCENARIOS,
   payload,
+  resetKey = 0,
 }) {
   const [inputText, setInputText] = useState('');
 
+  useEffect(() => {
+    setInputText('');
+  }, [resetKey]);
+
   const handleSend = () => {
     if (isInvestigating) return;
-    if (!inputText.trim()) {
+    const submittedText = inputText.trim();
+    setInputText('');
+    if (!submittedText) {
       onRunTriage?.(payload);
       return;
     }
-    const parsed = parseNaturalLanguageWire(inputText, payload);
+    const parsed = parseNaturalLanguageWire(submittedText, payload);
     onRunTriage?.(parsed);
   };
 
   const handleQuickChipClick = (scenarioKey) => {
     const scn = scenarios[scenarioKey];
     if (scn) {
-      onSelectScenario?.(scenarioKey);
-      onRunTriage?.(scn.payload);
+      if (onSelectScenario) {
+        onSelectScenario(scenarioKey);
+      } else {
+        onRunTriage?.(scn.payload);
+      }
     }
   };
 
@@ -372,6 +387,7 @@ export function GeminiHeroView({
           onChangeModel={onChangeModel}
           onSelectScenario={onSelectScenario}
           scenarios={scenarios}
+          resetKey={resetKey}
           variant="hero"
         />
 
@@ -431,24 +447,29 @@ export default function TelemetryPanel({
   onEditToggle,
   onPayloadChange,
   onRunTriage,
-  isDemoMode = false,
-  onToggleDemoMode,
   selectedModel = 'gemini-2.5-flash',
   onChangeModel,
   onSelectScenario,
   scenarios = PRESET_SCENARIOS,
   onResetWorkspace,
+  resetKey = 0,
 }) {
   const [inputText, setInputText] = useState('');
   const hasInjection = useMemo(() => hasAdversarialContent(payload), [payload]);
 
+  useEffect(() => {
+    setInputText('');
+  }, [resetKey]);
+
   const handleSend = () => {
     if (isInvestigating) return;
-    if (!inputText.trim()) {
+    const submittedText = inputText.trim();
+    setInputText('');
+    if (!submittedText) {
       onRunTriage?.(payload);
       return;
     }
-    const parsed = parseNaturalLanguageWire(inputText, payload);
+    const parsed = parseNaturalLanguageWire(submittedText, payload);
     onRunTriage?.(parsed);
   };
 
@@ -469,9 +490,9 @@ export default function TelemetryPanel({
               Live Backend
             </span>
           ) : (
-            <span className="inline-flex items-center gap-1 text-[10px] font-mono text-amber-400 bg-amber-950/40 border border-amber-500/30 px-2 py-0.5 rounded-full">
-              <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
-              Demo Sim
+            <span className="inline-flex items-center gap-1 text-[10px] font-mono text-rose-400 bg-rose-950/40 border border-rose-500/30 px-2 py-0.5 rounded-full">
+              <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />
+              Backend Offline
             </span>
           )}
         </div>
@@ -489,6 +510,7 @@ export default function TelemetryPanel({
         scenarios={scenarios}
         variant="docked"
         onResetWorkspace={onResetWorkspace}
+        resetKey={resetKey}
       />
 
       {/* ── Adversarial Content Warning Banner ──────────────────────── */}

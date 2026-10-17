@@ -21,7 +21,7 @@ import {
   Trash2,
   ExternalLink,
 } from "lucide-react";
-import { DISPOSITION } from "../types.js";
+import { DISPOSITION, classifyScenario } from "../types.js";
 
 export default function HistoryDrawer({
   isOpen,
@@ -78,7 +78,26 @@ export default function HistoryDrawer({
       .filter((bc) => !localHistory.some((lh) => lh.case_id === bc.case_id))
       .map((bc) => ({
         case_id: bc.case_id,
-        scenario_name: bc.scenario_name || bc.case_id,
+        scenario_name: classifyScenario(
+          {
+            amount: bc.amount,
+            counterparty_country: bc.counterparty_country,
+            origin_country: bc.origin_country,
+            destination_country: bc.destination_country,
+            memo: bc.memo,
+            counterparty_name: bc.counterparty_name || bc.scenario_name,
+          },
+          {
+            preliminary_risk_level: bc.risk_level || bc.preliminary_risk_level,
+            disposition_title:
+              bc.disposition_title ||
+              (bc.category === "untrusted_instructions"
+                ? DISPOSITION.EMERGENCY
+                : bc.amount > 10000
+                ? DISPOSITION.ESCALATE
+                : DISPOSITION.DISMISS),
+          }
+        ),
         amount: bc.amount,
         currency: bc.currency || "USD",
         category: bc.category,
@@ -118,7 +137,7 @@ export default function HistoryDrawer({
         return (
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-rose-500/15 border border-rose-500/40 text-rose-400">
             <Flame className="w-3 h-3 text-rose-400 animate-pulse" />
-            FREEZE
+            ESCALATED
           </span>
         );
       case DISPOSITION.ESCALATE:

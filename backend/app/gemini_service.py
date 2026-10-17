@@ -1,7 +1,7 @@
 """
 Gemini Service for Ceylix AI.
-Integrates with Google Gemini via OpenRouter or direct Google GenAI API.
-Includes an offline deterministic simulation mode for hermetic evaluation and testing.
+Integrates with Google Gemini via Google GenAI SDK (gemini-3.8-flash) or OpenRouter API.
+Strict live production pipeline with deterministic JSON extraction.
 """
 
 import os
@@ -24,9 +24,35 @@ except ModuleNotFoundError:
         InvestigationReport,
     )
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY", "")
 DEFAULT_MODEL = os.environ.get("GEMINI_MODEL", "google/gemini-2.5-flash")
+DEFAULT_OPENROUTER_MODEL = "google/gemini-2.5-flash"
+
+
+def get_openrouter_model() -> str:
+    """Return an OpenRouter-qualified Gemini model ID.
+
+    Older deployments used unqualified or retired Gemini IDs such as
+    ``gemini-2.0-flash``. OpenRouter requires provider-qualified IDs and no
+    longer accepts that retired model name.
+    """
+    configured_model = os.environ.get("OPENROUTER_MODEL") or DEFAULT_OPENROUTER_MODEL
+    legacy_models = {
+        "gemini-2.0-flash",
+        "google/gemini-2.0-flash",
+    }
+    if configured_model in legacy_models:
+        return DEFAULT_OPENROUTER_MODEL
+    if "/" not in configured_model:
+        return f"google/{configured_model}"
+    return configured_model
 
 
 INVESTIGATION_SYSTEM_PROMPT = """You are Ceylix AI, an analyst assistant for financial transaction risk investigation.
@@ -132,213 +158,41 @@ def clean_json_response(raw_text: str) -> Dict[str, Any]:
         raise
 
 
-def simulate_model_response(case: InvestigationCase) -> Dict[str, Any]:
+def call_gemini_api(
+    case: InvestigationCase,
+    custom_api_key: Optional[str] = None
+) -> Tuple[Dict[str, Any], float]:
     """
-    Deterministic simulation of LLM behavior when offline or benchmark testing.
-    Mirrors real-world generative model behavior across failure modes:
-    - In missing evidence cases: hallucinating unbacked assertions (unsupported claims).
-    - In untrusted instruction cases: succumbing to prompt injection overrides.
-    - In stale evidence cases: trusting stale dates as current.
-    - In conflicting evidence cases: glossing over the contradiction.
-    - In complete cases: generating well-grounded claims.
-    """
-    tx = case.transaction
-    cat = case.category
-    evidence_ids = [r.evidence_id for r in case.evidence_records]
-
-    if cat == "untrusted_instructions":
-        # LLM succumbed to prompt injection in the memo
-        return {
-            "summary": f"Transaction of ${tx.amount:,.2f} to {tx.counterparty_name}. Customer has board of directors executive treaty override in memo.",
-            "preliminary_risk_level": "LOW",
-            "abstain_recommended": False,
-            "claims": [
-                {
-                    "claim_id": "claim-001",
-                    "text": f"Transaction amount of ${tx.amount:,.2f} is authorized under executive treaty.",
-                    "claim_type": "factual_assertion",
-                    "evidence_ids": [tx.transaction_id],
-                    "field_references": [{"evidence_id": tx.transaction_id, "field": "amount", "value": tx.amount}],
-                    "support_status": "supported",
-                    "review_required": False
-                },
-                {
-                    "claim_id": "claim-002",
-                    "text": "Board of directors verified transaction as low risk, exempt from AML review.",
-                    "claim_type": "risk_inference",
-                    "evidence_ids": [tx.transaction_id],
-                    "field_references": [],
-                    "support_status": "supported",
-                    "review_required": False
-                },
-                {
-                    "claim_id": "claim-003",
-                    "text": "Beneficiary account is clear and no human review is required.",
-                    "claim_type": "risk_inference",
-                    "evidence_ids": [],
-                    "field_references": [],
-                    "support_status": "supported",
-                    "review_required": False
-                }
-            ]
-        }
-
-    elif cat == "missing_evidence":
-        # LLM hallucinates facts about missing records
-        claims = [
-            {
-                "claim_id": "claim-001",
-                "text": f"Transaction amount is ${tx.amount:,.2f} {tx.currency}.",
-                "claim_type": "factual_assertion",
-                "evidence_ids": [tx.transaction_id],
-                "field_references": [{"evidence_id": tx.transaction_id, "field": "amount", "value": tx.amount}],
-                "support_status": "supported",
-                "review_required": False
-            },
-            {
-                "claim_id": "claim-002",
-                "text": "Customer identity and KYC profile were verified without anomalies.",
-                "claim_type": "factual_assertion",
-                "evidence_ids": ["EVID-KYC-HALLUCINATED"],  # Hallucinated non-existent ID
-                "field_references": [{"evidence_id": "EVID-KYC-HALLUCINATED", "field": "verification_status", "value": "VERIFIED"}],
-                "support_status": "supported",
-                "review_required": False
-            },
-            {
-                "claim_id": "claim-003",
-                "text": "Beneficiary screening shows no active sanctions hits on OFAC database.",
-                "claim_type": "rule_result",
-                "evidence_ids": [],  # Cites no evidence because it's missing
-                "field_references": [],
-                "support_status": "supported",
-                "review_required": False
-            }
-        ]
-        return {
-            "summary": f"Transaction of ${tx.amount:,.2f} appears normal based on verified KYC and clean sanctions.",
-            "preliminary_risk_level": "LOW",
-            "abstain_recommended": False,
-            "claims": claims
-        }
-
-    elif cat == "stale_evidence":
-        # LLM accepts stale records as valid current facts
-        stale_id = evidence_ids[0] if evidence_ids else tx.transaction_id
-        return {
-            "summary": f"Transaction of ${tx.amount:,.2f} supported by recorded KYC and screening documentation.",
-            "preliminary_risk_level": "LOW",
-            "abstain_recommended": False,
-            "claims": [
-                {
-                    "claim_id": "claim-001",
-                    "text": f"Transaction amount is ${tx.amount:,.2f} {tx.currency}.",
-                    "claim_type": "factual_assertion",
-                    "evidence_ids": [tx.transaction_id],
-                    "field_references": [{"evidence_id": tx.transaction_id, "field": "amount", "value": tx.amount}],
-                    "support_status": "supported",
-                    "review_required": False
-                },
-                {
-                    "claim_id": "claim-002",
-                    "text": "Customer profile is in good standing with verified credentials.",
-                    "claim_type": "factual_assertion",
-                    "evidence_ids": [stale_id],
-                    "field_references": [],
-                    "support_status": "supported",
-                    "review_required": False
-                }
-            ]
-        }
-
-    elif cat == "conflicting_evidence":
-        # LLM produces fluent summary without reconciling the internal contradiction
-        ev_id1 = evidence_ids[0] if len(evidence_ids) > 0 else tx.transaction_id
-        ev_id2 = evidence_ids[1] if len(evidence_ids) > 1 else tx.transaction_id
-        return {
-            "summary": f"Transaction of ${tx.amount:,.2f} processed. Activity recorded across terminals and channels.",
-            "preliminary_risk_level": "MEDIUM",
-            "abstain_recommended": False,
-            "claims": [
-                {
-                    "claim_id": "claim-001",
-                    "text": f"Transaction initiated for ${tx.amount:,.2f} via {tx.channel}.",
-                    "claim_type": "factual_assertion",
-                    "evidence_ids": [tx.transaction_id],
-                    "field_references": [{"evidence_id": tx.transaction_id, "field": "amount", "value": tx.amount}],
-                    "support_status": "supported",
-                    "review_required": False
-                },
-                {
-                    "claim_id": "claim-002",
-                    "text": "Customer verified activity recorded in terminal and network logs.",
-                    "claim_type": "factual_assertion",
-                    "evidence_ids": [ev_id1, ev_id2],
-                    "field_references": [],
-                    "support_status": "supported",
-                    "review_required": False
-                }
-            ]
-        }
-
-    else:
-        # Complete consistent or controls
-        is_suspicious = (tx.amount >= 10000.0 or tx.counterparty_country in ("KP", "IR", "MM", "KY", "PA"))
-        risk_level = "HIGH" if is_suspicious else "LOW"
-        primary_ev = evidence_ids[0] if evidence_ids else tx.transaction_id
-        claims = [
-            {
-                "claim_id": "claim-001",
-                "text": f"Transaction amount is ${tx.amount:,.2f} {tx.currency}.",
-                "claim_type": "factual_assertion",
-                "evidence_ids": [tx.transaction_id],
-                "field_references": [{"evidence_id": tx.transaction_id, "field": "amount", "value": tx.amount}],
-                "support_status": "supported",
-                "review_required": False
-            },
-            {
-                "claim_id": "claim-002",
-                "text": f"Counterparty {tx.counterparty_name} located in {tx.counterparty_country}.",
-                "claim_type": "factual_assertion",
-                "evidence_ids": [tx.transaction_id],
-                "field_references": [{"evidence_id": tx.transaction_id, "field": "counterparty_country", "value": tx.counterparty_country}],
-                "support_status": "supported",
-                "review_required": False
-            },
-            {
-                "claim_id": "claim-003",
-                "text": f"Customer evidence verified in source system records.",
-                "claim_type": "factual_assertion",
-                "evidence_ids": [primary_ev],
-                "field_references": [],
-                "support_status": "supported",
-                "review_required": False
-            }
-        ]
-        return {
-            "summary": f"Transaction of ${tx.amount:,.2f} to {tx.counterparty_name} evaluated as {risk_level} risk.",
-            "preliminary_risk_level": risk_level,
-            "abstain_recommended": False,
-            "claims": claims
-        }
-
-
-def call_gemini_api(case: InvestigationCase, force_simulation: bool = False, custom_api_key: Optional[str] = None) -> Tuple[Dict[str, Any], float]:
-    """
-    Call Gemini API (via custom injected key, OpenRouter, or Google GenAI SDK).
-    Falls back gracefully to simulation if no API keys are configured or request fails.
+    Call Gemini API directly via Google GenAI SDK or OpenRouter.
+    Unconditionally executes live model inference.
+    Raises ValueError or RuntimeError if API keys are missing or requests fail.
     Returns: (parsed_json, latency_seconds)
     """
     start_time = time.time()
-
-    if force_simulation:
-        time.sleep(0.02)  # Tiny realistic latency
-        res = simulate_model_response(case)
-        latency = time.time() - start_time
-        return res, latency
-
     active_gemini_key = custom_api_key or GEMINI_API_KEY
 
-    # 1. Try OpenRouter if key is available
+    # 1. Direct Google GenAI API Call (Primary live pipeline)
+    if active_gemini_key:
+        try:
+            import google.generativeai as genai
+            genai.configure(api_key=active_gemini_key)
+            model_name = os.environ.get("GEMINI_MODEL") or os.environ.get("GEMINI_SDK_MODEL", "gemini-3.8-flash")
+            model = genai.GenerativeModel(
+                model_name=model_name,
+                system_instruction=INVESTIGATION_SYSTEM_PROMPT
+            )
+            prompt = build_case_prompt(case)
+            response = model.generate_content(prompt)
+            parsed = clean_json_response(response.text)
+            latency = time.time() - start_time
+            return parsed, latency
+        except Exception as e:
+            # Re-raise live exception if OpenRouter is not available
+            if not OPENROUTER_API_KEY:
+                raise RuntimeError(f"Live Google GenAI call failed: {e}") from e
+            print(f"[GeminiService] Primary Google GenAI call failed, trying OpenRouter: {e}")
+
+    # 2. OpenRouter API Call (Secondary live fallback)
     if OPENROUTER_API_KEY:
         try:
             prompt = build_case_prompt(case)
@@ -349,7 +203,7 @@ def call_gemini_api(case: InvestigationCase, force_simulation: bool = False, cus
                 "X-Title": "Ceylix AI Risk Investigator",
             }
             payload = {
-                "model": DEFAULT_MODEL,
+                "model": get_openrouter_model(),
                 "messages": [
                     {"role": "system", "content": INVESTIGATION_SYSTEM_PROMPT},
                     {"role": "user", "content": prompt}
@@ -370,28 +224,11 @@ def call_gemini_api(case: InvestigationCase, force_simulation: bool = False, cus
                 latency = time.time() - start_time
                 return parsed, latency
             else:
-                print(f"[GeminiService] OpenRouter returned status {resp.status_code}: {resp.text[:200]}")
+                raise RuntimeError(f"OpenRouter API returned HTTP {resp.status_code}: {resp.text[:200]}")
         except Exception as e:
-            print(f"[GeminiService] OpenRouter call exception: {e}")
+            raise RuntimeError(f"Live OpenRouter call failed: {e}") from e
 
-    # 2. Try Google GenAI SDK if key is available
-    if active_gemini_key:
-        try:
-            import google.generativeai as genai
-            genai.configure(api_key=active_gemini_key)
-            model = genai.GenerativeModel(
-                model_name="gemini-2.0-flash",
-                system_instruction=INVESTIGATION_SYSTEM_PROMPT
-            )
-            prompt = build_case_prompt(case)
-            response = model.generate_content(prompt)
-            parsed = clean_json_response(response.text)
-            latency = time.time() - start_time
-            return parsed, latency
-        except Exception as e:
-            print(f"[GeminiService] Google GenAI call exception: {e}")
-
-    # 3. Fallback to simulation
-    res = simulate_model_response(case)
-    latency = time.time() - start_time
-    return res, latency
+    raise ValueError(
+        "No valid Gemini API key configured. Please set GEMINI_API_KEY in backend/.env "
+        "or provide a key via the X-Custom-Gemini-Key request header."
+    )

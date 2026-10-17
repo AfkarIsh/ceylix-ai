@@ -87,6 +87,19 @@ def evaluate_velocity_anomaly(tx: Transaction, records: List[EvidenceRecord]) ->
     
     avg_amount = float(history_rec.data.get("avg_30d_transaction_amount", 1000.0))
     ratio = tx.amount / avg_amount if avg_amount > 0 else 1.0
+
+    # Suppress velocity anomaly penalties on low-value retail transactions under $500
+    if tx.amount < 500.0:
+        return RuleEvaluationResult(
+            rule_name="VelocityAnomalyRule",
+            rule_description="Compares transaction amount against 30-day historical average volume (>5x baseline)",
+            passed=True,
+            flagged=False,
+            details=f"Transaction amount ${tx.amount:,.2f} is under $500.00 retail baseline threshold",
+            severity="INFO",
+            evidence_ids=[history_rec.evidence_id]
+        )
+
     is_anomaly = ratio >= 5.0
 
     return RuleEvaluationResult(
@@ -157,21 +170,30 @@ def evaluate_sanctions_match(records: List[EvidenceRecord]) -> RuleEvaluationRes
     )
 
 
-def evaluate_kyc_status(records: List[EvidenceRecord]) -> RuleEvaluationResult:
+def evaluate_kyc_status(records: List[EvidenceRecord], tx: Optional[Transaction] = None) -> RuleEvaluationResult:
     kyc_rec = find_evidence_by_type(records, "KYC_PROFILE")
     if not kyc_rec:
+        # Missing optional KYC evidence must not be treated as a confirmed fraudulent or adverse finding.
+        # Assign severity "INFO" so missing optional evidence does not trigger a 94/100 CRITICAL escalation state.
         return RuleEvaluationResult(
             rule_name="KycVerificationRule",
             rule_description="Validates that customer identity verification is complete and active",
-            passed=False,
-            flagged=True,
-            details="KYC profile record is missing",
-            severity="HIGH",
+            passed=True,
+            flagged=False,
+            details="KYC profile record is not available (optional baseline omitted)",
+            severity="INFO",
             evidence_ids=[]
         )
     
     status = kyc_rec.data.get("verification_status", "UNVERIFIED")
     is_verified = (status == "VERIFIED")
+
+    # If low-value transaction (< 500.0) has unverified KYC, assign LOW severity instead of HIGH
+    severity = "HIGH"
+    if not is_verified and tx and tx.amount < 500.0:
+        severity = "LOW"
+    elif is_verified:
+        severity = "INFO"
 
     return RuleEvaluationResult(
         rule_name="KycVerificationRule",
@@ -179,7 +201,7 @@ def evaluate_kyc_status(records: List[EvidenceRecord]) -> RuleEvaluationResult:
         passed=is_verified,
         flagged=not is_verified,
         details=f"KYC verification status: {status}",
-        severity="HIGH" if not is_verified else "INFO",
+        severity=severity,
         evidence_ids=[kyc_rec.evidence_id]
     )
 
@@ -193,6 +215,6 @@ def run_all_deterministic_rules(case: InvestigationCase) -> List[RuleEvaluationR
         evaluate_velocity_anomaly(case.transaction, case.evidence_records),
         evaluate_device_anomaly(case.transaction, case.evidence_records),
         evaluate_sanctions_match(case.evidence_records),
-        evaluate_kyc_status(case.evidence_records),
+        evaluate_kyc_status(case.evidence_records, case.transaction),
     ]
     return results
