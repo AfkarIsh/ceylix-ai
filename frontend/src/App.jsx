@@ -206,8 +206,8 @@ function adaptBackendResponse(data, elapsedMs) {
       (data.abstain_recommended && hasUntrustedInjection
         ? "BLOCKED"
         : data.abstain_recommended
-        ? "PARTIALLY_GROUNDED"
-        : "FULLY_GROUNDED"),
+          ? "PARTIALLY_GROUNDED"
+          : "FULLY_GROUNDED"),
     latency_ms: data.latency_ms || elapsedMs,
     decision: data.decision || "ABSTAIN_FOR_HUMAN_REVIEW",
     disposition_title: dispositionTitle,
@@ -245,13 +245,13 @@ function adaptBackendResponse(data, elapsedMs) {
         status: hasUntrustedInjection
           ? "DATA_UNAVAILABLE"
           : ofacFailed
-          ? "MATCHED"
-          : "CLEAR",
+            ? "MATCHED"
+            : "CLEAR",
         detail: hasUntrustedInjection
           ? "Entity string contained adversarial control sequences — OFAC query quarantined by AST parser"
           : ofacFailed
-          ? "Sanctions match detected — see rule results for SDN reference"
-          : "No hits against OFAC SDN & Consolidated List",
+            ? "Sanctions match detected — see rule results for SDN reference"
+            : "No hits against OFAC SDN & Consolidated List",
         source_label: "Local Rule Engine",
         verified: false,
       },
@@ -300,23 +300,23 @@ function buildInvestigationCase(payload, selectedKey, caseId, sensitivityMode) {
       "SYNTHETIC BENCHMARK CASE - NOT REAL FINANCIAL RECORDS",
     created_at: new Date().toISOString(),
     transaction: {
-      transaction_id:      payload.transaction_id,
-      timestamp:           payload.timestamp,
-      account_id:          payload.account_id,
-      customer_id:         payload.customer_id         || "CUST-LIVE-01",
-      amount:              parseFloat(payload.amount)  || 0,
-      currency:            payload.currency            || "USD",
-      channel:             payload.channel             || "WIRE",
+      transaction_id: payload.transaction_id,
+      timestamp: payload.timestamp,
+      account_id: payload.account_id,
+      customer_id: payload.customer_id || "CUST-LIVE-01",
+      amount: parseFloat(payload.amount) || 0,
+      currency: payload.currency || "USD",
+      channel: payload.channel || "WIRE",
       counterparty_account: payload.counterparty_account || "ACCT-UNKNOWN",
-      counterparty_name:   payload.counterparty_name   || "Unknown Counterparty",
-      counterparty_bank:   payload.counterparty_bank   || "Unknown Institution",
+      counterparty_name: payload.counterparty_name || "Unknown Counterparty",
+      counterparty_bank: payload.counterparty_bank || "Unknown Institution",
       counterparty_country: payload.counterparty_country || "US",
-      origin_country:      payload.origin_country || "US",
+      origin_country: payload.origin_country || "US",
       destination_country: payload.counterparty_country || "US",
-      ip_address:          payload.device_ip           || null,
-      location:            payload.origin_country       || null,
-      memo:                payload.memo                || null,
-      is_synthetic:        true,
+      ip_address: payload.device_ip || null,
+      location: payload.origin_country || null,
+      memo: payload.memo || null,
+      is_synthetic: true,
     },
     evidence_records: [],
   };
@@ -397,14 +397,6 @@ function AppContent() {
   );
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
-  const [historyResetAt] = useState(() => {
-    const existing = localStorage.getItem(STORAGE_KEYS.HISTORY_RESET_AT);
-    if (existing) return existing;
-
-    const resetAt = new Date().toISOString();
-    localStorage.setItem(STORAGE_KEYS.HISTORY_RESET_AT, resetAt);
-    return resetAt;
-  });
   const [caseHistory, setCaseHistory] = useState(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.CASE_HISTORY);
@@ -413,19 +405,8 @@ function AppContent() {
       return [];
     }
   });
-  const [dismissedHistoryIds, setDismissedHistoryIds] = useState(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.DISMISSED_HISTORY);
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
-  const [historyCount, setHistoryCount] = useState(() => caseHistory.length);
 
-  useEffect(() => {
-    setHistoryCount(caseHistory.length);
-  }, [caseHistory.length]);
+  const historyCount = caseHistory.length;
 
   const abortRef = useRef(null);
 
@@ -616,21 +597,13 @@ function AppContent() {
         };
 
         setCaseHistory((prev) => {
-          const now = Date.now();
-          const filtered = prev.filter(
-            (p) => !(p.case_id === caseIdToUse && Math.abs(new Date(p.timestamp).getTime() - now) < 1500)
-          );
-          const updated = [historyItem, ...filtered];
+          // Prepend new investigation run
+          const updated = [historyItem, ...prev];
           try {
             localStorage.setItem(STORAGE_KEYS.CASE_HISTORY, JSON.stringify(updated));
           } catch {
             // ignore localStorage quota errors
           }
-          return updated;
-        });
-        setDismissedHistoryIds((prev) => {
-          const updated = prev.filter((id) => id !== caseIdToUse);
-          localStorage.setItem(STORAGE_KEYS.DISMISSED_HISTORY, JSON.stringify(updated));
           return updated;
         });
       }
@@ -705,9 +678,12 @@ function AppContent() {
   // ── Clear Local Session History ──────────────────────────────────────────
   const handleClearLocalHistory = useCallback(() => {
     setCaseHistory([]);
-    setHistoryCount(0);
-    localStorage.removeItem(STORAGE_KEYS.CASE_HISTORY);
-    localStorage.removeItem(STORAGE_KEYS.DISMISSED_HISTORY);
+    try {
+      localStorage.removeItem(STORAGE_KEYS.CASE_HISTORY);
+      localStorage.removeItem(STORAGE_KEYS.DISMISSED_HISTORY);
+    } catch {
+      // ignore
+    }
   }, []);
 
   // ── Firestore Sync ───────────────────────────────────────────────────────

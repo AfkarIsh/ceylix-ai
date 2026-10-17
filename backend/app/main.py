@@ -253,9 +253,3 @@ def sync_case_to_firestore(case_id: str):
         "synced": True,
         "message": f"Case {case_id} successfully persisted to Firestore compliance audit log."
     }
-
-
-if __name__ == "__main__":
-    import uvicorn
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run("backend.app.main:app", host="0.0.0.0", port=port, reload=False)

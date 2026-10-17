@@ -150,11 +150,9 @@ export default function Header({
           >
             <History className="w-3.5 h-3.5 text-indigo-400" />
             <span>Case History</span>
-            {historyCount > 0 && (
-              <span className="ml-1 text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-semibold">
-                {historyCount}
-              </span>
-            )}
+            <span className="ml-1 text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-semibold">
+              {historyCount}
+            </span>
           </button>
 
           {/* New Investigation Reset */}

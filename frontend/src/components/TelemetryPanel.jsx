@@ -44,8 +44,8 @@ function maskAccount(id) {
 
 function formatCurrency(amount, currency = 'USD') {
   return new Intl.NumberFormat('en-US', {
-    style:                 'currency',
-    currency:              currency,
+    style: 'currency',
+    currency: currency,
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(Number(amount) || 0);
@@ -156,9 +156,8 @@ export function GeminiPillBar({
     <div className={`relative w-full ${isHero ? 'max-w-2xl mx-auto' : ''}`}>
       {/* ── The Gemini Pill Container ─────────────────────────────── */}
       <div
-        className={`w-full rounded-full bg-slate-900/95 border border-slate-700/80 shadow-2xl flex items-center transition-all duration-200 backdrop-blur-md focus-within:border-cyan-500/80 focus-within:ring-2 focus-within:ring-cyan-500/25 ${
-          isHero ? 'px-4 py-2.5 sm:px-5 sm:py-3.5 gap-2.5 sm:gap-3.5' : 'px-3.5 py-2 gap-2'
-        }`}
+        className={`w-full rounded-full bg-slate-900/95 border border-slate-700/80 shadow-2xl flex items-center transition-all duration-200 backdrop-blur-md focus-within:border-cyan-500/80 focus-within:ring-2 focus-within:ring-cyan-500/25 ${isHero ? 'px-4 py-2.5 sm:px-5 sm:py-3.5 gap-2.5 sm:gap-3.5' : 'px-3.5 py-2 gap-2'
+          }`}
       >
         {!isHero && onResetWorkspace && (
           <button
@@ -183,11 +182,10 @@ export function GeminiPillBar({
               setIsPresetDropdownOpen(!isPresetDropdownOpen);
               setIsModelDropdownOpen(false);
             }}
-            className={`rounded-full flex items-center justify-center transition-all ${
-              isHero
+            className={`rounded-full flex items-center justify-center transition-all ${isHero
                 ? 'w-8 h-8 sm:w-9 sm:h-9 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white'
                 : 'w-7 h-7 bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white'
-            }`}
+              }`}
             title="1-Click benchmark scenarios (Case A, B, C)"
           >
             <Plus className={isHero ? 'w-4 h-4 sm:w-4.5 sm:h-4.5' : 'w-3.5 h-3.5'} />
@@ -228,9 +226,8 @@ export function GeminiPillBar({
           onChange={(e) => setInputText(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder="Ask Ceylix AI to triage a transaction, paste SWIFT message..."
-          className={`flex-1 bg-transparent text-slate-100 placeholder-slate-400/80 focus:outline-none font-sans min-w-0 ${
-            isHero ? 'text-xs sm:text-sm' : 'text-xs'
-          }`}
+          className={`flex-1 bg-transparent text-slate-100 placeholder-slate-400/80 focus:outline-none font-sans min-w-0 ${isHero ? 'text-xs sm:text-sm' : 'text-xs'
+            }`}
         />
 
         {/* Right: Model Selector Pill */}
@@ -241,11 +238,10 @@ export function GeminiPillBar({
               setIsModelDropdownOpen(!isModelDropdownOpen);
               setIsPresetDropdownOpen(false);
             }}
-            className={`flex items-center gap-1.5 rounded-full font-medium transition-colors border ${
-              isHero
+            className={`flex items-center gap-1.5 rounded-full font-medium transition-colors border ${isHero
                 ? 'px-3 py-1.5 text-xs bg-slate-800/90 hover:bg-slate-700/90 border-slate-700 text-slate-200'
                 : 'px-2.5 py-1 text-[11px] bg-slate-800/70 hover:bg-slate-700/80 border-slate-700/80 text-slate-300'
-            }`}
+              }`}
             title="Select Gemini cognitive tier"
           >
             <span className="text-cyan-400 font-semibold truncate">
@@ -268,11 +264,10 @@ export function GeminiPillBar({
                     onChangeModel?.(m.id);
                     setIsModelDropdownOpen(false);
                   }}
-                  className={`w-full text-left p-2 rounded-xl text-xs flex items-start gap-2.5 transition-colors ${
-                    selectedModel === m.id
+                  className={`w-full text-left p-2 rounded-xl text-xs flex items-start gap-2.5 transition-colors ${selectedModel === m.id
                       ? 'bg-cyan-950/70 border border-cyan-500/50 text-cyan-200'
                       : 'hover:bg-slate-800 text-slate-300'
-                  }`}
+                    }`}
                 >
                   <span className="text-base mt-0.5">{m.icon}</span>
                   <div className="flex-1 min-w-0">
@@ -297,11 +292,10 @@ export function GeminiPillBar({
           type="button"
           onClick={onSend}
           disabled={isInvestigating}
-          className={`rounded-full flex items-center justify-center transition-all flex-shrink-0 shadow-lg shadow-cyan-950/60 disabled:opacity-50 disabled:cursor-not-allowed ${
-            isHero
+          className={`rounded-full flex items-center justify-center transition-all flex-shrink-0 shadow-lg shadow-cyan-950/60 disabled:opacity-50 disabled:cursor-not-allowed ${isHero
               ? 'w-8 h-8 sm:w-9 sm:h-9 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white'
               : 'w-7 h-7 sm:w-8 sm:h-8 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white'
-          }`}
+            }`}
           title="Send query / Execute triage"
         >
           {isInvestigating ? (
@@ -553,11 +547,10 @@ export default function TelemetryPanel({
           <button
             onClick={onEditToggle}
             disabled={isInvestigating}
-            className={`flex items-center gap-1 text-[11px] px-2.5 py-1 rounded transition-colors ${
-              isEditing
+            className={`flex items-center gap-1 text-[11px] px-2.5 py-1 rounded transition-colors ${isEditing
                 ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
                 : 'text-slate-400 hover:text-slate-200 bg-slate-900/60 hover:bg-slate-800 border border-slate-800'
-            }`}
+              }`}
             title={isEditing ? 'Close manual editor' : 'Manually edit fields'}
           >
             <Edit3 className="w-3 h-3" />
@@ -610,11 +603,10 @@ export default function TelemetryPanel({
                 </span>
                 <span className="text-slate-500">➔</span>
                 <span
-                  className={`px-1.5 py-0.5 rounded ${
-                    payload.counterparty_country === 'IR' || payload.counterparty_country === 'KP'
+                  className={`px-1.5 py-0.5 rounded ${payload.counterparty_country === 'IR' || payload.counterparty_country === 'KP'
                       ? 'bg-rose-950 text-rose-300 border border-rose-800/60 font-bold'
                       : 'bg-slate-800 text-slate-300'
-                  }`}
+                    }`}
                 >
                   {payload.counterparty_country || 'US'}
                 </span>
@@ -707,11 +699,10 @@ export default function TelemetryPanel({
             />
           ) : (
             <div
-              className={`text-[11px] mt-0.5 leading-relaxed line-clamp-2 ${
-                hasInjection && INJECTION_PATTERNS.some((rx) => rx.test(payload.memo))
+              className={`text-[11px] mt-0.5 leading-relaxed line-clamp-2 ${hasInjection && INJECTION_PATTERNS.some((rx) => rx.test(payload.memo))
                   ? 'text-amber-300 font-mono bg-amber-950/30 p-1.5 rounded border border-amber-800/40'
                   : 'text-slate-400 italic'
-              }`}
+                }`}
             >
               "{payload.memo || 'No memo provided'}"
             </div>
@@ -742,11 +733,10 @@ export default function TelemetryPanel({
           <button
             type="button"
             onClick={() => onChangeSensitivityMode?.(SENSITIVITY_MODE.STANDARD)}
-            className={`p-2 rounded-lg text-left transition-all border ${
-              sensitivityMode === SENSITIVITY_MODE.STANDARD
+            className={`p-2 rounded-lg text-left transition-all border ${sensitivityMode === SENSITIVITY_MODE.STANDARD
                 ? 'bg-cyan-950/60 border-cyan-500/70 text-cyan-200 shadow-md shadow-cyan-950/50'
                 : 'bg-slate-900/50 border-slate-800/80 text-slate-400 hover:text-slate-200 hover:border-slate-700'
-            }`}
+              }`}
           >
             <div className="text-xs font-semibold flex items-center justify-between">
               Standard Mode
@@ -762,11 +752,10 @@ export default function TelemetryPanel({
           <button
             type="button"
             onClick={() => onChangeSensitivityMode?.(SENSITIVITY_MODE.STRICT)}
-            className={`p-2 rounded-lg text-left transition-all border ${
-              sensitivityMode === SENSITIVITY_MODE.STRICT
+            className={`p-2 rounded-lg text-left transition-all border ${sensitivityMode === SENSITIVITY_MODE.STRICT
                 ? 'bg-rose-950/60 border-rose-500/70 text-rose-200 shadow-md shadow-rose-950/50'
                 : 'bg-slate-900/50 border-slate-800/80 text-slate-400 hover:text-slate-200 hover:border-slate-700'
-            }`}
+              }`}
           >
             <div className="text-xs font-semibold flex items-center justify-between">
               Strict Mode
