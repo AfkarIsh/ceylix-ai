@@ -668,16 +668,15 @@ def perform_deterministic_validation(
 def compute_grounding_status(report: ValidationReport, fast_path: bool = False) -> str:
     """
     Substantive grounding status: FULLY_GROUNDED, PARTIALLY_GROUNDED, UNGROUNDED.
-    A result with zero quarantined claims is NOT automatically fully grounded.
+    A result with zero verified claims is NOT fully grounded.
     """
-    if fast_path:
-        return "FULLY_GROUNDED"
+    if report.total_claims_count == 0:
+        return "UNGROUNDED"
 
     if (
         report.untrusted_instruction_detected
         or report.unsupported_claims_count > 0
         or report.conflicting_claims_count > 0
-        or (report.total_claims_count == 0)
     ):
         return "UNGROUNDED"
 

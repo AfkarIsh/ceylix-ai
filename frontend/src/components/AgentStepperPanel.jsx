@@ -29,7 +29,7 @@ import {
 // ─────────────────────────────────────────────────────────────────────────────
 // Risk Gauge — animated horizontal bar with color transitions
 // ─────────────────────────────────────────────────────────────────────────────
-function RiskGauge({ score }) {
+function RiskGauge({ score, riskLevel }) {
   const [displayScore, setDisplayScore] = useState(0);
   const [rendered, setRendered]         = useState(false);
   const timerRef = useRef(null);
@@ -57,16 +57,17 @@ function RiskGauge({ score }) {
 
   const pct = Math.max(0, Math.min(100, score));
 
-  // colour thresholds
+  // Authoritative risk level mapping: 0-29 LOW, 30-69 MEDIUM, 70-100 HIGH
+  const derivedLevel = riskLevel || (pct >= 70 ? 'HIGH' : pct >= 30 ? 'MEDIUM' : 'LOW');
   let barColor, textColor, label;
-  if (pct >= 80) {
+  if (derivedLevel === 'HIGH' || pct >= 70) {
     barColor  = 'from-rose-600 to-rose-800';
     textColor = 'text-rose-400';
-    label     = 'CRITICAL';
-  } else if (pct >= 40) {
+    label     = 'HIGH';
+  } else if (derivedLevel === 'MEDIUM' || pct >= 30) {
     barColor  = 'from-amber-500 to-amber-700';
     textColor = 'text-amber-400';
-    label     = 'ELEVATED';
+    label     = 'MEDIUM';
   } else {
     barColor  = 'from-emerald-500 to-emerald-700';
     textColor = 'text-emerald-400';
@@ -85,8 +86,8 @@ function RiskGauge({ score }) {
           </span>
           <span className="text-xs text-slate-500 font-mono">/100</span>
           <span className={`text-[10px] font-bold ml-1.5 px-1.5 py-0.5 rounded border font-mono ${
-            pct >= 80 ? 'text-rose-400 bg-rose-950/40 border-rose-800/60' :
-            pct >= 40 ? 'text-amber-400 bg-amber-950/40 border-amber-800/60' :
+            derivedLevel === 'HIGH' || pct >= 70 ? 'text-rose-400 bg-rose-950/40 border-rose-800/60' :
+            derivedLevel === 'MEDIUM' || pct >= 30 ? 'text-amber-400 bg-amber-950/40 border-amber-800/60' :
                         'text-emerald-400 bg-emerald-950/40 border-emerald-800/60'
           }`}>
             {label}
@@ -306,7 +307,7 @@ export default function AgentStepperPanel({
               <span>Awaiting investigation score…</span>
             </div>
           ) : (
-            <RiskGauge score={score} />
+            <RiskGauge score={score} riskLevel={result?.preliminary_risk_level} />
           )}
         </div>
 

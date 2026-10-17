@@ -29,7 +29,7 @@ import {
   ChevronDown,
   ChevronUp,
 } from 'lucide-react';
-import { DISPOSITION } from '../types.js';
+import { DISPOSITION, isTaskIntentMismatch } from '../types.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Disposition header card — colour varies by disposition type
@@ -351,7 +351,7 @@ export default function DossierPanel({
                   </div>
 
                   {/* 2. Unresolved Questions */}
-                  {(result.warnings?.length > 0 || result.probes?.ip_geo?.status === 'MATCHED' || (result.input_intent && result.input_intent !== 'PAYMENT_INSTRUCTION')) && (
+                  {(result.warnings?.length > 0 || result.probes?.ip_geo?.status === 'MATCHED' || isTaskIntentMismatch(result.input_intent)) && (
                     <div className="text-[10px] bg-amber-950/20 p-2 rounded border border-amber-900/40">
                       <span className="font-bold text-amber-400 uppercase tracking-wide block mb-0.5">
                         Unresolved Questions:
@@ -360,8 +360,8 @@ export default function DossierPanel({
                         {result.probes?.ip_geo?.status === 'MATCHED' && (
                           <li>Proxy/VPN routing detected on client IP — physical geolocation obscured.</li>
                         )}
-                        {result.input_intent && result.input_intent !== 'PAYMENT_INSTRUCTION' && (
-                          <li>Payment memo contains unrelated non-financial text ({result.input_intent}) requiring verification.</li>
+                        {isTaskIntentMismatch(result.input_intent) && (
+                          <li>Payment memo contains unrelated non-financial task ({result.input_intent}) requiring verification.</li>
                         )}
                         {result.warnings?.map((w, idx) => (
                           <li key={idx}>{w}</li>
@@ -377,9 +377,13 @@ export default function DossierPanel({
                         Reason for Analyst Review:
                       </span>
                       <span className="text-cyan-200/90">
-                        {result.preliminary_risk_level === 'HIGH'
-                          ? 'Mandatory sanctions & high-risk corridor review required before transaction release. Input mismatch quarantined.'
-                          : 'Automated clearance withheld: non-payment instructions detected in memo. Refer to specialized operational workflow.'}
+                        {isTaskIntentMismatch(result.input_intent)
+                          ? `Automated clearance withheld: non-payment instructions (${result.input_intent}) detected in memo. Refer to specialized operational workflow.`
+                          : result.preliminary_risk_level === 'HIGH'
+                          ? 'Mandatory sanctions & high-risk corridor review required before transaction release.'
+                          : result.abstention_reasons?.some((r) => /sanction|screening|missing/i.test(r))
+                          ? 'Automated clearance withheld: missing mandatory sanctions screening verification or compliance hold under applicable regulatory thresholds.'
+                          : 'Automated clearance withheld: compliance review required under applicable regulatory thresholds.'}
                       </span>
                     </div>
                   )}

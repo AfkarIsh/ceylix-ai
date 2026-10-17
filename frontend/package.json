@@ -8,6 +8,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "test:p0": "node test_p0_parser.mjs",
+    "test": "node test_p0_parser.mjs",
     "lint": "echo 'No linter configured'"
   },
   "dependencies": {

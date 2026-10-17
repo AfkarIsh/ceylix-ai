@@ -28,6 +28,7 @@ import {
   mapDecisionToDisposition,
   riskLevelToScore,
   classifyScenario,
+  isTaskIntentMismatch,
 } from "./types.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -95,7 +96,9 @@ function adaptBackendResponse(data, elapsedMs) {
     ) ||
     false;
 
-  const isInputMismatch = Boolean(data.input_intent && data.input_intent !== "PAYMENT_INSTRUCTION");
+  const isInputMismatch = Boolean(
+    data.input_intent && isTaskIntentMismatch(data.input_intent)
+  );
 
   const dispositionTitle = mapDecisionToDisposition(
     data.decision,
@@ -512,7 +515,15 @@ function AppContent() {
 
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.detail || `Server returned HTTP ${res.status}: ${res.statusText}`);
+        let errorMsg = `Server returned HTTP ${res.status}: ${res.statusText}`;
+        if (typeof errorData.detail === "string") {
+          errorMsg = errorData.detail;
+        } else if (Array.isArray(errorData.detail)) {
+          errorMsg = errorData.detail
+            .map((d) => `${d.loc ? d.loc.filter((x) => x !== 'body').join('.') + ': ' : ''}${d.msg}`)
+            .join('; ');
+        }
+        throw new Error(errorMsg);
       }
 
       const data = await res.json();
@@ -579,19 +590,20 @@ function AppContent() {
 
       // Append run to case history if successful
       if (finalResult) {
+        const resolvedTx = finalResult.transaction || payloadToUse;
         const scenarioTitle = payloadToUse.search_query
           ? `Searched: "${payloadToUse.search_query.length > 32 ? payloadToUse.search_query.slice(0, 32) + '…' : payloadToUse.search_query}"`
-          : classifyScenario(payloadToUse, finalResult);
+          : classifyScenario(resolvedTx, finalResult);
 
         const historyItem = {
           history_id: `${caseIdToUse}-${Date.now()}`,
           case_id: caseIdToUse,
           scenario_name: scenarioTitle,
           search_query: payloadToUse.search_query || null,
-          counterparty_name: payloadToUse.counterparty_name || "",
-          memo: payloadToUse.memo || "",
-          amount: payloadToUse.amount,
-          currency: payloadToUse.currency || "USD",
+          counterparty_name: resolvedTx.counterparty_name || "",
+          memo: resolvedTx.memo || "",
+          amount: resolvedTx.amount,
+          currency: resolvedTx.currency || "USD",
           timestamp: new Date().toISOString(),
           disposition_title: finalResult.disposition_title,
           calibrated_score: finalResult.calibrated_score,
@@ -599,7 +611,7 @@ function AppContent() {
           grounding_status: finalResult.grounding_status,
           error_message: finalResult.error_message,
           sensitivity_mode: sensitivityMode,
-          payload: { ...payloadToUse, case_id: caseIdToUse },
+          payload: { ...resolvedTx, case_id: caseIdToUse },
           result: { ...finalResult },
         };
 
@@ -756,7 +768,7 @@ function AppContent() {
       synthetic_disclaimer:
         "SYNTHETIC BENCHMARK CASE - NOT REAL FINANCIAL RECORDS",
       sensitivity_mode: sensitivityMode,
-      telemetry_payload: activePayload,
+      telemetry_payload: investigationResult?.transaction || activePayload,
       workbench_evaluation: investigationResult,
     };
     const blob = new Blob([JSON.stringify(auditPackage, null, 2)], {

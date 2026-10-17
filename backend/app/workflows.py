@@ -210,15 +210,36 @@ def run_validated_workflow(
         ),
         None,
     )
+    sanctions_status = (
+        usable_entity_sanctions_status(supplied_sanctions, tx)
+        if supplied_sanctions
+        else "UNAVAILABLE"
+    )
+    screening_resolved_and_clear = (sanctions_status == "NO_MATCH")
+
     has_high_risk_input = (
         tx.counterparty_country.upper() in HIGH_RISK_JURISDICTIONS
         or STRUCTURING_LOWER_BOUND <= tx.amount <= STRUCTURING_UPPER_BOUND
-        or usable_entity_sanctions_status(supplied_sanctions, tx)
-        in {"CONFIRMED_MATCH", "POTENTIAL_MATCH", "PEP_HIT"}
+        or sanctions_status in {"CONFIRMED_MATCH", "POTENTIAL_MATCH", "PEP_HIT"}
     )
     injection_detected, _ = detect_untrusted_instructions(case)
 
-    if is_low_value and is_domestic and is_commercial and not has_high_risk_input and not injection_detected:
+    # System-1 Reflex Fast-Path Clearance Condition:
+    # Requires:
+    # 1. Low value (< $500)
+    # 2. Domestic corridor (US -> US)
+    # 3. Verified commercial retail memo
+    # 4. Mandatory sanctions screening MUST BE RESOLVED AND CLEAR (NO_MATCH).
+    #    Unresolved, missing, or unavailable screening can NEVER be silently cleared.
+    # 5. No injection tokens detected.
+    if (
+        is_low_value
+        and is_domestic
+        and is_commercial
+        and not has_high_risk_input
+        and not injection_detected
+        and screening_resolved_and_clear
+    ):
         latency_ms = round((time.perf_counter() - val_start) * 1000.0, 2)
         persisted_evidence, probe_statuses = execute_telemetry_probes(tx, case.evidence_records)
         anomaly_res = detect_transaction_anomalies(case)
@@ -242,6 +263,39 @@ def run_validated_workflow(
                 },
             },
         }
+
+        # Substantive verified claims backing the fast path reflex clearance
+        screen_ev_id = supplied_sanctions.evidence_id if supplied_sanctions else f"EVID-SCREEN-{tx.transaction_id}"
+        fast_path_claims = [
+            Claim(
+                claim_id="claim-fast-001",
+                text=f"Transaction amount of ${tx.amount:,.2f} {tx.currency} conforms to low-value retail baseline (< $500.00).",
+                claim_type="factual_assertion",
+                evidence_ids=[tx.transaction_id],
+                support_status="supported",
+                review_required=False,
+                validation_notes="Deterministic verification: amount conforms to de minimis wholesale retail exemption.",
+            ),
+            Claim(
+                claim_id="claim-fast-002",
+                text=f"Corridor {tx.origin_country or 'US'} → {tx.destination_country} verified as domestic commercial settlement.",
+                claim_type="factual_assertion",
+                evidence_ids=[tx.transaction_id],
+                support_status="supported",
+                review_required=False,
+                validation_notes="Deterministic verification: Origin and destination countries are domestic US.",
+            ),
+            Claim(
+                claim_id="claim-fast-003",
+                text=f"Beneficiary {tx.counterparty_name} screened with NO_MATCH against authoritative OFAC and PEP lists.",
+                claim_type="rule_result",
+                evidence_ids=[screen_ev_id],
+                support_status="supported",
+                review_required=False,
+                validation_notes="Deterministic verification: Screening feed confirmed NO_MATCH.",
+            ),
+        ]
+
         return InvestigationReport(
             case_id=case.case_id,
             workflow_type="validated_deterministic",
@@ -249,14 +303,15 @@ def run_validated_workflow(
             fast_path_used=True,
             summary=(
                 "Transaction conforms to verified domestic retail wholesale settlement "
-                "baseline. Cleared by automated System-1 fast-path reflex triage."
+                "baseline. Mandatory sanctions screening verified CLEAR (NO_MATCH). "
+                "Cleared by automated System-1 fast-path reflex triage."
             ),
             preliminary_risk_level="LOW",
             risk_score=5,
             calibrated_score=5,
             risk_score_breakdown=fast_path_bd,
             transaction=tx,
-            claims=[],
+            claims=fast_path_claims,
             rule_results=[],
             risk_dimensions=risk_breakdown,
             abstain_recommended=False,

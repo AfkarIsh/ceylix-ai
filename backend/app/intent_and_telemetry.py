@@ -188,6 +188,35 @@ def classify_input_intent(text: str, transaction: Optional[Transaction] = None) 
             ]
         )
 
+    # 3b. Check for Natural-Language Explanatory Prose, QA Inquiries, or Policy Verification questions
+    inquiry_patterns = [
+        r"\bthe disposition\b",
+        r"\bverify that\b",
+        r"\bpolicy when mandatory screening\b",
+        r"\bdeclared policy\b",
+        r"\bfast path is permitted\b",
+        r"\bsanctions probe is unavailable\b",
+        r"\bmandatory screening is unresolved\b",
+        r"\bwhy was (?:the )?payment\b",
+        r"\bexplain the disposition\b",
+    ]
+    inquiry_matches = sum(1 for p in inquiry_patterns if re.search(p, full_text_lower))
+    if inquiry_matches >= 1:
+        return IngestionIntentResult(
+            intent="NATURAL_LANGUAGE_INQUIRY",
+            is_compatible_with_financial_triage=False,
+            detected_mismatch_type="NON_TRANSACTION_EXPLANATORY_PROSE",
+            routing_target="compliance_policy_governance_workflow",
+            validation_error=(
+                "Input contains an explanatory inquiry or policy verification question rather than an authorized payment instruction. "
+                "Conversational queries must be addressed in the Compliance Governance workflow, not parsed as financial wire data."
+            ),
+            warnings=[
+                "Natural-language inquiry detected in remittance text.",
+                "Content quarantined: questions and analytical prose must not fabricate transaction records or inherit prior case state."
+            ]
+        )
+
     # 4. Standard financial payment instruction / investigation
     is_wire = any(re.search(p, full_text, re.IGNORECASE) for p in SWIFT_WIRE_PATTERNS)
     return IngestionIntentResult(

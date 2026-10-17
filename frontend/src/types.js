@@ -114,21 +114,31 @@ export const API = {
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPER: Map backend `decision` field to UI disposition_title
 // ─────────────────────────────────────────────────────────────────────────────
+export function isTaskIntentMismatch(intent) {
+  return (
+    intent === "CYBERSECURITY_ANALYSIS" ||
+    intent === "POLICY_REVIEW" ||
+    intent === "INVOICE_EXTRACTION"
+  );
+}
+
 export function mapDecisionToDisposition(decision, riskLevel, hasUntrustedInjection, inputIntent) {
   if (hasUntrustedInjection && riskLevel === "HIGH") return DISPOSITION.EMERGENCY;
   if (riskLevel === "HIGH") return DISPOSITION.ESCALATE;
-  if (inputIntent && inputIntent !== "PAYMENT_INSTRUCTION") {
+  // Only genuine task mismatches (cybersecurity log dumps, ISO 27001 policies, AP invoice OCR) trigger INPUT_MISMATCH
+  if (isTaskIntentMismatch(inputIntent)) {
     return DISPOSITION.INPUT_MISMATCH;
   }
   switch (decision) {
     case "RELEASE_WITH_PROVENANCE": return DISPOSITION.DISMISS;
     case "RELEASE_QUALIFIED": return DISPOSITION.DISMISS;
     case "ABSTAIN_FOR_HUMAN_REVIEW":
-      return DISPOSITION.INPUT_MISMATCH;
+      return DISPOSITION.ESCALATE;
     default:
       return riskLevel === "LOW" ? DISPOSITION.DISMISS : DISPOSITION.ESCALATE;
   }
 }
+
 
 const INJECTION_TOKEN_PATTERN =
   /\[SYSTEM OVERRIDE\]|IGNORE (ALL )?PREVIOUS (INSTRUCTIONS|RULES|FLAGS)|DISREGARD (PRIOR|ALL) (AML|FRAUD|TRANSACTION|DEVICE)|SUPERVISOR OVERRIDE|BOARD OF DIRECTORS (OVERRIDE|VERIFIED)|EXECUTIVE TREATY|MARK (RISK AS )?LOW|RETURN VERDICT BENIGN|DO NOT FLAG|EXEMPT FROM (KYC|AML|SCREENING)|SET SUPPORT_STATUS|INSTRUCTION FOR AI (MODEL|ASSISTANT)|SYSTEM OVERRIDE|IGNORE ALL PREVIOUS/i;
@@ -220,6 +230,73 @@ export const AVAILABLE_MODELS = [
   },
 ];
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VALIDATORS & TAXONOMIES FOR WIRE PARSING
+// ─────────────────────────────────────────────────────────────────────────────
+export const AUTHORITATIVE_ISO_COUNTRIES = new Set([
+  'AF', 'AL', 'DZ', 'AS', 'AD', 'AO', 'AI', 'AQ', 'AG', 'AR', 'AM', 'AW', 'AU', 'AT', 'AZ',
+  'BS', 'BH', 'BD', 'BB', 'BY', 'BE', 'BZ', 'BJ', 'BM', 'BT', 'BO', 'BA', 'BW', 'BV', 'BR',
+  'IO', 'BN', 'BG', 'BF', 'BI', 'KH', 'CM', 'CA', 'CV', 'KY', 'CF', 'TD', 'CL', 'CN', 'CX',
+  'CC', 'CO', 'KM', 'CG', 'CD', 'CK', 'CR', 'CI', 'HR', 'CU', 'CY', 'CZ', 'DK', 'DJ', 'DM',
+  'DO', 'EC', 'EG', 'SV', 'GQ', 'ER', 'EE', 'ET', 'FK', 'FO', 'FJ', 'FI', 'FR', 'GF', 'PF',
+  'TF', 'GA', 'GM', 'GE', 'DE', 'GH', 'GI', 'GR', 'GL', 'GD', 'GP', 'GU', 'GT', 'GG', 'GN',
+  'GW', 'GY', 'HT', 'HM', 'VA', 'HN', 'HK', 'HU', 'IS', 'IN', 'ID', 'IR', 'IQ', 'IE', 'IM',
+  'IL', 'IT', 'JM', 'JP', 'JE', 'JO', 'KZ', 'KE', 'KI', 'KP', 'KR', 'KW', 'KG', 'LA', 'LV',
+  'LB', 'LS', 'LR', 'LY', 'LI', 'LT', 'LU', 'MO', 'MK', 'MG', 'MW', 'MY', 'MV', 'ML', 'MT',
+  'MH', 'MQ', 'MR', 'MU', 'YT', 'MX', 'FM', 'MD', 'MC', 'MN', 'ME', 'MS', 'MA', 'MZ', 'MM',
+  'NA', 'NR', 'NP', 'NL', 'NC', 'NZ', 'NI', 'NE', 'NG', 'NU', 'NF', 'MP', 'NO', 'OM', 'PK',
+  'PW', 'PS', 'PA', 'PG', 'PY', 'PE', 'PH', 'PN', 'PL', 'PT', 'PR', 'QA', 'RE', 'RO', 'RU',
+  'RW', 'BL', 'SH', 'KN', 'LC', 'MF', 'PM', 'VC', 'WS', 'SM', 'ST', 'SA', 'SN', 'RS', 'SC',
+  'SL', 'SG', 'SK', 'SI', 'SB', 'SO', 'ZA', 'GS', 'SS', 'ES', 'LK', 'SD', 'SR', 'SJ', 'SZ',
+  'SE', 'CH', 'SY', 'TW', 'TJ', 'TZ', 'TH', 'TL', 'TG', 'TK', 'TO', 'TT', 'TN', 'TR', 'TM',
+  'TC', 'TV', 'UG', 'UA', 'AE', 'GB', 'US', 'UM', 'UY', 'UZ', 'VU', 'VE', 'VN', 'VG', 'VI',
+  'WF', 'EH', 'YE', 'ZM', 'ZW'
+]);
+
+export const FULL_COUNTRY_NAME_MAP = {
+  'united states': 'US',
+  'united states of america': 'US',
+  'usa': 'US',
+  'united kingdom': 'GB',
+  'great britain': 'GB',
+  'uk': 'GB',
+  'switzerland': 'CH',
+  'swiss confederation': 'CH',
+  'germany': 'DE',
+  'france': 'FR',
+  'iran': 'IR',
+  'islamic republic of iran': 'IR',
+  'north korea': 'KP',
+  'dprk': 'KP',
+  'russia': 'RU',
+  'russian federation': 'RU',
+  'cayman islands': 'KY',
+  'panama': 'PA',
+  'syria': 'SY',
+  'sri lanka': 'LK',
+  'singapore': 'SG',
+  'china': 'CN',
+  'japan': 'JP',
+  'canada': 'CA',
+  'australia': 'AU',
+  'iceland': 'IS',
+  'thailand': 'TH',
+};
+
+export function isValidIPv4(ip) {
+  if (!ip || typeof ip !== 'string') return false;
+  const parts = ip.trim().split('.');
+  if (parts.length !== 4) return false;
+  for (const p of parts) {
+    if (!/^\d{1,3}$/.test(p)) return false;
+    const n = parseInt(p, 10);
+    if (n < 0 || n > 255) return false;
+    if (p.length > 1 && p.startsWith('0')) return false;
+  }
+  return true;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // WIRE PARSER: Free-form Natural Language, SWIFT, and JSON Ingestion
 // ─────────────────────────────────────────────────────────────────────────────
@@ -228,16 +305,25 @@ export function parseNaturalLanguageWire(rawText, fallbackPayload = {}) {
     return parseNaturalLanguageWireUnsafe(rawText, fallbackPayload);
   } catch (error) {
     console.error("[Ceylix] Unable to parse natural-language wire input:", error);
-    return { ...fallbackPayload };
+    return {
+      is_unsupported_input: true,
+      input_type: "PARSE_ERROR",
+      error_message: `Parsing error: ${error.message || 'Malformed input'}`,
+      search_query: String(rawText || ''),
+    };
   }
 }
 
 function parseNaturalLanguageWireUnsafe(rawText, fallbackPayload = {}) {
-  if (!rawText || typeof rawText !== "string") return fallbackPayload;
+  if (!rawText || typeof rawText !== "string") {
+    return { ...fallbackPayload };
+  }
   const text = rawText.trim();
-  if (!text) return fallbackPayload;
+  if (!text) {
+    return { ...fallbackPayload };
+  }
 
-  // 0. Preset Scenario matching (e.g. "Scenario A", "CASE-051", "Scenario B", "CASE-002", "Scenario C", "CASE-088")
+  // 0. Preset Scenario matching (e.g. "Scenario A", "CASE-051", "Scenario B", "CASE-021", "Scenario C", "CASE-041")
   const lowerText = text.toLowerCase();
   for (const [key, scn] of Object.entries(PRESET_SCENARIOS)) {
     if (
@@ -251,6 +337,7 @@ function parseNaturalLanguageWireUnsafe(rawText, fallbackPayload = {}) {
         _matchedPresetKey: key,
         case_id: scn.case_id,
         scenario_name: scn.name,
+        evidence_records: scn.evidence_records || [],
       };
     }
   }
@@ -261,84 +348,239 @@ function parseNaturalLanguageWireUnsafe(rawText, fallbackPayload = {}) {
   if (text.startsWith("{") && text.endsWith("}")) {
     try {
       const parsed = JSON.parse(text);
+      let parsedDest = (parsed.destination_country || parsed.counterparty_country || "US").toUpperCase();
+      let parsedOrigin = (parsed.origin_country || "US").toUpperCase();
+      if (!AUTHORITATIVE_ISO_COUNTRIES.has(parsedDest)) parsedDest = "US";
+      if (!AUTHORITATIVE_ISO_COUNTRIES.has(parsedOrigin)) parsedOrigin = "US";
+
+      let ipAddr = parsed.device_ip || parsed.ip_address || "198.51.100.24";
+      if (!isValidIPv4(ipAddr)) ipAddr = "198.51.100.24";
+
       return {
         transaction_id: parsed.transaction_id || `TX-JSON-${searchId}`,
         case_id: parsed.case_id || `CASE-JSON-${searchId}`,
         search_query: text,
         timestamp: parsed.timestamp || new Date().toISOString(),
-        account_id: parsed.account_id || fallbackPayload.account_id || "acc_00994120",
-        customer_id: parsed.customer_id || fallbackPayload.customer_id || "CUST-INGEST",
-        amount: parseFloat(parsed.amount) || fallbackPayload.amount || 1000,
-        currency: parsed.currency || "USD",
-        channel: parsed.channel || fallbackPayload.channel || "WIRE",
-        counterparty_account: parsed.counterparty_account || fallbackPayload.counterparty_account || "US29ACCT000199284712",
-        counterparty_name: parsed.counterparty_name || fallbackPayload.counterparty_name || "Commercial Beneficiary",
-        counterparty_bank: parsed.counterparty_bank || fallbackPayload.counterparty_bank || "Global Settlement Bank",
-        counterparty_country: (parsed.counterparty_country || parsed.destination_country || fallbackPayload.counterparty_country || "US").toUpperCase(),
-        origin_country: (parsed.origin_country || fallbackPayload.origin_country || "US").toUpperCase(),
-        destination_country: (parsed.destination_country || parsed.counterparty_country || fallbackPayload.counterparty_country || "US").toUpperCase(),
-        device_ip: parsed.device_ip || parsed.ip_address || fallbackPayload.device_ip || "198.51.100.24",
-        memo: parsed.memo || fallbackPayload.memo || "Imported JSON payload settlement",
+        account_id: parsed.account_id || `acc_00${Math.floor(100000 + Math.random() * 900000)}`,
+        customer_id: parsed.customer_id || `CUST-${Math.floor(1000 + Math.random() * 9000)}`,
+        amount: parseFloat(parsed.amount) || 1000.0,
+        currency: (parsed.currency || "USD").toUpperCase(),
+        channel: parsed.channel || "WIRE",
+        counterparty_account: parsed.counterparty_account || `US29ACCT${searchId}`,
+        counterparty_name: parsed.counterparty_name || "Commercial Beneficiary",
+        counterparty_bank: parsed.counterparty_bank || (parsedDest === 'GB' ? 'Barclays Bank UK PLC' : 'JPMorgan Chase Bank, N.A.'),
+        counterparty_country: parsedDest,
+        origin_country: parsedOrigin,
+        destination_country: parsedDest,
+        device_ip: ipAddr,
+        memo: parsed.memo || "Imported JSON payload settlement",
         is_synthetic: true,
       };
     } catch {
-      // Fall through to natural language parsing
+      // Fall through to other grammars
     }
   }
 
-  // 1a. Structured Key-Value Ingestion (e.g. Judge Benchmark Scenarios)
-  // Format: "Case ID: JUDGE-BENIGN-001\nTransaction Type: Domestic Wire\nAmount: 142.50 USD..."
-  if (text.includes(":") && (text.includes("\n") || text.toLowerCase().includes("case id") || text.toLowerCase().includes("beneficiary"))) {
-    const kvLines = text.split(/\r?\n/);
+  // 1a. Structured Key-Value Ingestion (Bullet points, colons, or single-line key-value pastes)
+  if (text.includes(":") && (text.includes("\n") || text.toLowerCase().includes("pasted amount") || text.toLowerCase().includes("amount") || text.toLowerCase().includes("beneficiary") || text.toLowerCase().includes("route"))) {
+    const lines = text.split(/\r?\n/);
     const kv = {};
-    for (const line of kvLines) {
-      const colonIdx = line.indexOf(":");
+
+    for (const line of lines) {
+      const clean = line.replace(/^[\s\-*•]+/, '').trim();
+      const colonIdx = clean.indexOf(':');
       if (colonIdx > 0) {
-        const k = line.slice(0, colonIdx).trim().toLowerCase();
-        const v = line.slice(colonIdx + 1).trim();
+        const k = clean.slice(0, colonIdx).trim().toLowerCase();
+        const v = clean.slice(colonIdx + 1).trim();
         if (v) kv[k] = v;
       }
     }
 
-    const explicitCase = kv["case id"] || kv["case_id"] || kv["case"];
-    const explicitBen = kv["beneficiary"] || kv["counterparty"] || kv["counterparty name"];
-    const explicitAmt = kv["amount"];
-
-    if (explicitCase || explicitBen || explicitAmt) {
-      let parsedAmt = null;
-      if (explicitAmt) {
-        const amtClean = explicitAmt.replace(/[^0-9.]/g, "");
-        if (amtClean) parsedAmt = parseFloat(amtClean);
+    // Handle single-line with multiple keywords (e.g. "Pasted amount: USD 142.50 Route: US → US Beneficiary: ...")
+    if (Object.keys(kv).length <= 1 && text.includes(':')) {
+      const keywordRegex = /(?:^|\s|[-*•]\s*)(Pasted amount|Amount|Route|Corridor|Beneficiary Bank|Beneficiary|Counterparty Bank|Counterparty|Source IP|Device IP|Client IP|IP Address|IP|Payment Memo|Memo|Account ID|Customer ID|Case ID|Transaction Type|Channel):/gi;
+      let match;
+      const matches = [];
+      while ((match = keywordRegex.exec(text)) !== null) {
+        matches.push({ key: match[1].toLowerCase(), end: match.index + match[0].length, index: match.index });
       }
-      const cpartyCountry = (kv["destination country"] || kv["destination"] || kv["counterparty country"] || "US").toUpperCase();
-      const originCountry = (kv["origin country"] || kv["origin"] || "US").toUpperCase();
-      const channelVal = kv["transaction type"] || kv["channel"] || (text.toUpperCase().includes("ONLINE") ? "ONLINE_BANKING" : "WIRE");
-      const derivedTxId = explicitCase ? `TX-${explicitCase.replace(/^(CASE|JUDGE)-/, '')}` : `TX-SRCH-${searchId}`;
+      for (let i = 0; i < matches.length; i++) {
+        const start = matches[i].end;
+        const end = (i + 1 < matches.length) ? matches[i + 1].index : text.length;
+        const val = text.slice(start, end).trim();
+        if (val) kv[matches[i].key] = val;
+      }
+    }
+
+    const getVal = (...keys) => {
+      for (const k of keys) {
+        if (kv[k] !== undefined) return kv[k];
+        for (const [actualK, actualV] of Object.entries(kv)) {
+          if (actualK.replace(/[^a-z0-9]/g, '').includes(k.replace(/[^a-z0-9]/g, ''))) {
+            return actualV;
+          }
+        }
+      }
+      return null;
+    };
+
+    const rawAmt = getVal('pasted amount', 'amount', 'amt', 'value');
+    const rawRoute = getVal('route', 'corridor');
+    const rawOrigin = getVal('origin country', 'origin', 'from country', 'from');
+    const rawDest = getVal('destination country', 'destination', 'counterparty country', 'to country', 'to');
+    const rawBen = getVal('beneficiary', 'counterparty', 'beneficiary name', 'counterparty name');
+    const rawBank = getVal('beneficiary bank', 'counterparty bank', 'bank', 'institution', 'settlement bank');
+    const rawIp = getVal('source ip', 'device ip', 'ip address', 'ip', 'client ip');
+    const rawMemo = getVal('payment memo', 'memo', 'description', 'purpose', 'ref', 'reference');
+    const rawCase = getVal('case id', 'case');
+    const rawChannel = getVal('transaction type', 'channel', 'type');
+    const rawAcc = getVal('account id', 'account', 'originating account');
+    const rawCust = getVal('customer id', 'customer');
+
+    if (rawAmt || rawBen || rawRoute || rawCase) {
+      let parsedAmt = null;
+      let currency = 'USD';
+      if (rawAmt) {
+        const numClean = rawAmt.replace(/,/g, '').match(/[0-9]+(?:\.[0-9]+)?/);
+        if (numClean) parsedAmt = parseFloat(numClean[0]);
+        const currMatch = rawAmt.match(/\b([A-Z]{3})\b/i);
+        if (currMatch) currency = currMatch[1].toUpperCase();
+      }
+
+      let originCountry = 'US';
+      let destCountry = 'US';
+
+      if (rawRoute) {
+        const routeParts = rawRoute.split(/[\s→\->/]+/).map(s => s.trim().toUpperCase()).filter(s => s.length === 2 && AUTHORITATIVE_ISO_COUNTRIES.has(s));
+        if (routeParts.length >= 2) {
+          originCountry = routeParts[0];
+          destCountry = routeParts[1];
+        } else if (routeParts.length === 1) {
+          destCountry = routeParts[0];
+        }
+      }
+      if (rawOrigin) {
+        const candO = rawOrigin.trim().slice(0, 2).toUpperCase();
+        if (AUTHORITATIVE_ISO_COUNTRIES.has(candO)) originCountry = candO;
+      }
+      if (rawDest) {
+        const candD = rawDest.trim().slice(0, 2).toUpperCase();
+        if (AUTHORITATIVE_ISO_COUNTRIES.has(candD)) destCountry = candD;
+      }
+
+      let counterpartyBank = rawBank;
+      if (!counterpartyBank) {
+        if (destCountry === 'GB') counterpartyBank = 'Barclays Bank UK PLC';
+        else if (destCountry === 'CH') counterpartyBank = 'Credit Suisse AG';
+        else if (destCountry === 'IR') counterpartyBank = 'Bank Melli Iran';
+        else if (destCountry === 'KP') counterpartyBank = 'Foreign Trade Bank of DPRK';
+        else if (destCountry === 'US') counterpartyBank = 'JPMorgan Chase Bank, N.A.';
+        else counterpartyBank = 'Global Settlement Bank';
+      }
+
+      let resolvedIp = rawIp ? rawIp.trim() : null;
+      if (resolvedIp && !isValidIPv4(resolvedIp)) {
+        resolvedIp = null;
+      }
+
+      const txId = rawCase
+        ? (rawCase.startsWith('TX-') ? rawCase : `TX-${rawCase.replace(/^(CASE|JUDGE)-/, '')}`)
+        : `TX-SRCH-${searchId}`;
+      const caseId = rawCase || `CASE-SRCH-${searchId}`;
 
       return {
-        transaction_id: derivedTxId,
-        case_id: explicitCase || `CASE-SRCH-${searchId}`,
+        transaction_id: txId,
+        case_id: caseId,
         search_query: text,
         timestamp: new Date().toISOString(),
-        account_id: kv["account id"] || kv["account_id"] || `TEST-ACC-${searchId.toString().slice(-4)}`,
-        customer_id: kv["customer id"] || kv["customer_id"] || `TEST-CUST-${searchId.toString().slice(-4)}`,
+        account_id: rawAcc || `TEST-ACC-${searchId.toString().slice(-4)}`,
+        customer_id: rawCust || `TEST-CUST-${searchId.toString().slice(-4)}`,
         amount: parsedAmt !== null ? parsedAmt : 1000.0,
-        currency: (explicitAmt && explicitAmt.match(/[A-Z]{3}/i)?.[0]?.toUpperCase()) || "USD",
-        channel: channelVal,
-        counterparty_account: kv["account"] || `ACC-${searchId.toString().slice(-4)}`,
-        counterparty_name: explicitBen || "Commercial Beneficiary",
-        counterparty_bank: kv["beneficiary bank"] || kv["bank"] || "Global Settlement Bank",
-        counterparty_country: cpartyCountry,
+        currency: currency || "USD",
+        channel: rawChannel || (text.toUpperCase().includes("ONLINE") ? "ONLINE_BANKING" : "WIRE"),
+        counterparty_account: `ACC-${searchId.toString().slice(-4)}`,
+        counterparty_name: rawBen || "Commercial Beneficiary",
+        counterparty_bank: counterpartyBank,
+        settlement_institution: counterpartyBank,
+        counterparty_country: destCountry,
         origin_country: originCountry,
-        destination_country: cpartyCountry,
-        device_ip: kv["source ip"] || kv["device ip"] || kv["ip"] || "198.51.100.24",
-        memo: kv["payment memo"] || kv["memo"] || "Structured benchmark transaction",
+        destination_country: destCountry,
+        device_ip: resolvedIp,
+        memo: rawMemo || "Structured benchmark transaction",
         is_synthetic: true,
       };
     }
   }
 
-  // 1b. Check for prompt/mismatched tasks pasted into ingestion bar
+  // 1b. SWIFT MT103 Message Parsing
+  if (text.includes(':20:') || text.includes(':32A:') || text.includes(':50K:') || text.includes(':59:')) {
+    const getSwiftTag = (tag) => {
+      const rx = new RegExp(`:${tag}:([\\s\\S]*?)(?=\\n:[0-9]{2}[A-Z]?:|$)`, 'i');
+      const m = text.match(rx);
+      return m ? m[1].trim() : null;
+    };
+
+    const tag20 = getSwiftTag('20');
+    const tag32A = getSwiftTag('32A');
+    const tag50K = getSwiftTag('50K');
+    const tag57A = getSwiftTag('57A');
+    const tag59 = getSwiftTag('59');
+    const tag70 = getSwiftTag('70');
+
+    let amt = 25000.0;
+    let curr = 'USD';
+    if (tag32A) {
+      const m32 = tag32A.match(/(?:[0-9]{6})([A-Z]{3})([0-9,.]+)/i);
+      if (m32) {
+        curr = m32[1].toUpperCase();
+        let amtStr = m32[2];
+        if (amtStr.includes(',')) {
+          amtStr = amtStr.replace(',', '.');
+        }
+        amt = parseFloat(amtStr);
+      }
+    }
+
+    let ben = 'Commercial Beneficiary';
+    let benAcc = `ACC-${searchId.toString().slice(-4)}`;
+    if (tag59) {
+      const lines = tag59.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+      if (lines.length > 0) {
+        if (lines[0].startsWith('/')) {
+          benAcc = lines[0].replace(/^\//, '');
+          if (lines.length > 1) ben = lines.slice(1).join(' ');
+        } else {
+          ben = lines.join(' ');
+        }
+      }
+    }
+
+    const txId = tag20 ? `TX-${tag20.replace(/[^A-Za-z0-9_-]/g, '')}` : `TX-SWIFT-${searchId}`;
+    const caseId = tag20 ? `CASE-${tag20.replace(/[^A-Za-z0-9_-]/g, '')}` : `CASE-SWIFT-${searchId}`;
+
+    return {
+      transaction_id: txId,
+      case_id: caseId,
+      search_query: text,
+      timestamp: new Date().toISOString(),
+      account_id: `acc_00${Math.floor(100000 + Math.random() * 900000)}`,
+      customer_id: `CUST-${Math.floor(1000 + Math.random() * 9000)}`,
+      amount: amt,
+      currency: curr,
+      channel: "WIRE",
+      counterparty_account: benAcc,
+      counterparty_name: ben,
+      counterparty_bank: tag57A || "Barclays Bank UK PLC",
+      counterparty_country: "GB",
+      origin_country: "US",
+      destination_country: "GB",
+      device_ip: "198.51.100.24",
+      memo: tag70 || "SWIFT MT103 Interbank Credit Transfer",
+      is_synthetic: true,
+    };
+  }
+
+  // 1c. Check for prompt/mismatched tasks pasted into ingestion bar
   const isCyberPrompt = /\bssh\b/i.test(text) && (/\bfailed password\b/i.test(text) || /\blogin\b/i.test(text) || /\baccepted\b/i.test(text));
   const isPolicyPrompt = /\biso(?:\/iec)?\s*27001\b/i.test(text) || /\bpolicy review\b/i.test(text);
   const isInvoicePrompt = /\bextract (?:the )?(?:invoice|line items?)\b/i.test(text) || (/\bsupplier:\s*/i.test(text) && /\binvoice:\s*/i.test(text));
@@ -346,163 +588,102 @@ function parseNaturalLanguageWireUnsafe(rawText, fallbackPayload = {}) {
   if (isCyberPrompt || isPolicyPrompt || isInvoicePrompt) {
     // Preserve authoritative baseline transaction data completely; keep prompt strictly in memo
     return {
-      ...fallbackPayload,
       transaction_id: `TX-CUSTOM-${searchId}`,
       case_id: `CASE-CUSTOM-${searchId}`,
       search_query: text,
       timestamp: new Date().toISOString(),
-      amount: fallbackPayload.amount !== undefined ? fallbackPayload.amount : 101.12,
-      currency: fallbackPayload.currency || "USD",
-      counterparty_name: fallbackPayload.counterparty_name || "Commercial Beneficiary",
-      counterparty_country: fallbackPayload.counterparty_country || "US",
-      counterparty_bank: fallbackPayload.counterparty_bank || "Bank of America, N.A.",
-      origin_country: fallbackPayload.origin_country || "US",
-      destination_country: fallbackPayload.destination_country || fallbackPayload.counterparty_country || "US",
-      device_ip: fallbackPayload.device_ip || "198.51.100.24",
+      amount: 101.12,
+      currency: "USD",
+      counterparty_name: "Commercial Beneficiary",
+      counterparty_country: "US",
+      counterparty_bank: "JPMorgan Chase Bank, N.A.",
+      origin_country: "US",
+      destination_country: "US",
+      device_ip: "198.51.100.24",
       memo: text, // Keep untrusted text isolated in memo field
       is_synthetic: true,
     };
   }
 
-  // 2. Amount Extraction (Numbers, $175,000, 142.50 USD, 50k, 1.5M)
-  let amount = null;
-  const multiplierMatch = text.match(/\b(?:\$)?([0-9]+(?:\.[0-9]+)?)\s*(k|m|million|thousand)\b/i);
-  if (multiplierMatch) {
-    const val = parseFloat(multiplierMatch[1]);
-    const unit = multiplierMatch[2].toLowerCase();
-    if (unit === "k" || unit === "thousand") amount = val * 1000;
-    else if (unit === "m" || unit === "million") amount = val * 1000000;
-  } else {
-    const currencyMatch = text.match(/\$([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{1,2})?|[0-9]+(?:\.[0-9]{1,2})?)/);
-    if (currencyMatch) {
-      amount = parseFloat(currencyMatch[1].replace(/,/g, ""));
-    } else {
-      const plainNumMatch = text.match(/\b([0-9]{1,3}(?:,[0-9]{3})+(?:\.[0-9]{1,2})?)\b/);
-      if (plainNumMatch) {
-        amount = parseFloat(plainNumMatch[1].replace(/,/g, ""));
-      } else {
-        const floatMatch = text.match(/\b([0-9]+(?:\.[0-9]{1,2}))\b/);
-        if (floatMatch) amount = parseFloat(floatMatch[1]);
+  // 1d. SAFEGUARD: Check for natural-language explanatory prose, questions, commentary, or policy inquiries
+  const isQuestionOrInquiry =
+    /^(?:the disposition|verify that|why (?:is|was|did)|what (?:is|are|was)|how (?:does|do|can)|please (?:verify|explain|check)|explain (?:why|the)|does the|is the|can you)\b/i.test(text) ||
+    /\b(?:sanctions probe|mandatory screening|declared policy|fast path is permitted|unresolved|disposition says|investigation report)\b/i.test(text) ||
+    /\?$/.test(text);
+
+  if (isQuestionOrInquiry) {
+    return {
+      is_unsupported_input: true,
+      input_type: "NATURAL_LANGUAGE_INQUIRY",
+      error_message: "Natural-language inquiry or explanatory prose detected. Ceylix AI triage requires structured transaction fields (Amount, Route, Beneficiary, IP) or a SWIFT MT103 wire. To inspect a previous case, please enter the Case ID or select a scenario.",
+      search_query: text,
+    };
+  }
+
+  // 1e. Explicit short natural-language wire command (e.g. "Wire $50,000 to ACME Corp in UK")
+  const hasTransferVerb = /\b(?:wire|transfer|send|remit|pay)\b/i.test(text);
+  const amountMatch = text.match(/\$([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{1,2})?|[0-9]+(?:\.[0-9]{1,2})?)\b|\b([0-9]+(?:\.[0-9]{1,2})?)\s*(?:USD|EUR|GBP)\b/i);
+
+  if (hasTransferVerb && amountMatch) {
+    const amtStr = (amountMatch[1] || amountMatch[2]).replace(/,/g, '');
+    const amountVal = parseFloat(amtStr);
+
+    let origin = 'US';
+    let dest = 'US';
+
+    const fromMatch = text.match(/\bfrom\s+([A-Za-z\s]+?)\s+to\b/i);
+    const toMatch = text.match(/\bto\s+([A-Za-z0-9\s.,&'-]+?)(?:\s+in\s+([A-Za-z\s]+?))?(?:\s+for|\s+via|\s+with|\s+-|$)/i);
+
+    if (fromMatch) {
+      const cand = fromMatch[1].trim().toLowerCase();
+      if (FULL_COUNTRY_NAME_MAP[cand]) origin = FULL_COUNTRY_NAME_MAP[cand];
+      else if (cand.length === 2 && AUTHORITATIVE_ISO_COUNTRIES.has(cand.toUpperCase())) origin = cand.toUpperCase();
+    }
+
+    let beneficiary = 'Commercial Beneficiary';
+    if (toMatch) {
+      beneficiary = toMatch[1].trim();
+      if (toMatch[2]) {
+        const destCand = toMatch[2].trim().toLowerCase();
+        if (FULL_COUNTRY_NAME_MAP[destCand]) dest = FULL_COUNTRY_NAME_MAP[destCand];
+        else if (destCand.length === 2 && AUTHORITATIVE_ISO_COUNTRIES.has(destCand.toUpperCase())) dest = destCand.toUpperCase();
       }
     }
-  }
 
-  // 3. Country / Corridor Extraction
-  const COUNTRY_MAP = {
-    "united states": "US", "usa": "US", "us": "US",
-    "iran": "IR", "ir": "IR",
-    "north korea": "KP", "dprk": "KP", "kp": "KP",
-    "russia": "RU", "ru": "RU",
-    "switzerland": "CH", "swiss": "CH", "ch": "CH",
-    "cayman islands": "KY", "cayman": "KY", "ky": "KY",
-    "panama": "PA", "pa": "PA",
-    "syria": "SY", "sy": "SY",
-    "united kingdom": "GB", "uk": "GB", "gb": "GB",
-    "sri lanka": "LK", "lk": "LK",
-    "singapore": "SG", "sg": "SG",
-    "china": "CN", "cn": "CN",
-    "germany": "DE", "de": "DE",
-  };
-
-  let originCountry = "US";
-  let destinationCountry = null;
-
-  // Pattern: "from [Country] to [Country]"
-  const corridorMatch = text.match(/from\s+([A-Za-z\s]+?)\s+to\s+([A-Za-z\s]+?)(?:\s+for|\s+via|\s+in|\s+with|\s+-|\s*$)/i);
-  if (corridorMatch) {
-    const rawOrigin = corridorMatch[1].trim().toLowerCase();
-    const rawDest = corridorMatch[2].trim().toLowerCase();
-    if (COUNTRY_MAP[rawOrigin]) originCountry = COUNTRY_MAP[rawOrigin];
-    if (COUNTRY_MAP[rawDest]) destinationCountry = COUNTRY_MAP[rawDest];
-  }
-
-  // Direct: "to [Country]" or "in [Country]"
-  if (!destinationCountry) {
-    const inCountryMatch = text.match(/(?:to|into|in)\s+([A-Za-z\s]{2,15})(?:\s+via|\s+for|\s+-|\s*$)/i);
-    if (inCountryMatch) {
-      const cand = inCountryMatch[1].trim().toLowerCase();
-      if (COUNTRY_MAP[cand]) destinationCountry = COUNTRY_MAP[cand];
+    let ipAddress = '198.51.100.24';
+    const ipCandidate = text.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/);
+    if (ipCandidate && isValidIPv4(ipCandidate[0])) {
+      ipAddress = ipCandidate[0];
     }
+
+    return {
+      transaction_id: `TX-SRCH-${searchId}`,
+      case_id: `CASE-SRCH-${searchId}`,
+      search_query: text,
+      timestamp: new Date().toISOString(),
+      account_id: `acc_00${Math.floor(100000 + Math.random() * 900000)}`,
+      customer_id: `CUST-LIVE-${Math.floor(10 + Math.random() * 90)}`,
+      amount: amountVal,
+      currency: "USD",
+      channel: text.toUpperCase().includes("ONLINE") ? "ONLINE_BANKING" : "WIRE",
+      counterparty_account: `US${Math.floor(10 + Math.random() * 89)}CP${Math.floor(100000000 + Math.random() * 900000000)}`,
+      counterparty_name: beneficiary,
+      counterparty_bank: dest === 'GB' ? 'Barclays Bank UK PLC' : 'JPMorgan Chase Bank, N.A.',
+      counterparty_country: dest,
+      origin_country: origin,
+      destination_country: dest,
+      device_ip: ipAddress,
+      memo: text,
+      is_synthetic: true,
+    };
   }
 
-  // General token search for countries
-  if (!destinationCountry) {
-    for (const [name, code] of Object.entries(COUNTRY_MAP)) {
-      const rx = new RegExp(`\\b${name}\\b`, "i");
-      if (rx.test(text)) {
-        if (code !== originCountry || !destinationCountry) {
-          destinationCountry = code;
-        }
-      }
-    }
-  }
-  if (!destinationCountry) destinationCountry = "US";
-
-  // 4. IP Address Extraction
-  let ipAddress = null;
-  const ipMatch = text.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/);
-  if (ipMatch) {
-    ipAddress = ipMatch[0];
-  }
-
-  // 5. Beneficiary / Counterparty Name Extraction
-  let counterpartyName = null;
-  const benMatch = text.match(/(?:beneficiary:\s*|counterparty:\s*)([A-Za-z0-9\s.,&'-]+?)(?:\r?\n|\s+in\s+[A-Za-z]{2,15}|\s+via|\s+for|\s+from|\s+-|$)/i);
-  if (benMatch) {
-    const cand = benMatch[1].trim();
-    if (cand.length > 2 && !COUNTRY_MAP[cand.toLowerCase()]) {
-      counterpartyName = cand;
-    }
-  }
-  if (!counterpartyName) {
-    const corpMatch = text.match(/\b([A-Za-z0-9\s&'-]+?\s+(?:Corp|Corporation|Holdings|LLC|Ltd|Inc|Bank|Distributors|Trading|Logistics|Industries|Market))\b/i);
-    if (corpMatch) {
-      counterpartyName = corpMatch[1].trim();
-    }
-  }
-  if (!counterpartyName) {
-    counterpartyName = "Commercial Beneficiary";
-  }
-
-  // 6. Memo / Purpose Extraction
-  let memo = null;
-  const memoMatch = text.match(/(?:memo:\s*|for\s+|reference:\s*|ref:\s*)(.+?)(?:\r?\n|$)/i);
-  if (memoMatch) {
-    memo = memoMatch[1].trim();
-  } else {
-    memo = text;
-  }
-
-  const finalAmount = amount !== null ? amount : 25000;
-  const txId = `TX-SRCH-${searchId}`;
-  const caseId = `CASE-SRCH-${searchId}`;
-
-  // Default institutional bank based on corridor
-  let counterpartyBank = "Bank of America, N.A.";
-  if (destinationCountry === "IR") counterpartyBank = "Bank Melli Iran";
-  else if (destinationCountry === "KP") counterpartyBank = "Foreign Trade Bank of DPRK";
-  else if (destinationCountry === "CH") counterpartyBank = "Credit Suisse AG";
-  else if (destinationCountry === "KY") counterpartyBank = "Cayman National Bank";
-
+  // 1f. Input does not conform to any recognized financial structure
   return {
-    transaction_id: txId,
-    case_id: caseId,
+    is_unsupported_input: true,
+    input_type: "UNSUPPORTED_TRANSACTION_INPUT",
+    error_message: "Unable to parse input as a financial payment instruction. Please provide structured transaction fields (e.g. Amount, Route, Beneficiary, IP) or an explicit wire instruction (e.g. 'Wire $10,000 from US to GB to ACME Ltd').",
     search_query: text,
-    timestamp: new Date().toISOString(),
-    account_id: `acc_00${Math.floor(100000 + Math.random() * 900000)}`,
-    customer_id: `CUST-LIVE-${Math.floor(10 + Math.random() * 90)}`,
-    amount: finalAmount,
-    currency: "USD",
-    channel: text.toUpperCase().includes("ONLINE") ? "ONLINE_BANKING" : "WIRE",
-    counterparty_account: `US${Math.floor(10 + Math.random() * 89)}CP${Math.floor(100000000 + Math.random() * 900000000)}`,
-    counterparty_name: counterpartyName,
-    counterparty_bank: counterpartyBank,
-    counterparty_country: destinationCountry,
-    origin_country: originCountry,
-    destination_country: destinationCountry,
-    device_ip: ipAddress || "198.51.100.24",
-    memo: memo,
-    is_synthetic: true,
   };
 }
 export const PRESET_SCENARIOS = {
@@ -529,9 +710,28 @@ export const PRESET_SCENARIOS = {
       counterparty_account: "US29WGDI000199284712",
       counterparty_bank: "Bank of America, N.A.",
       counterparty_country: "US",
+      destination_country: "US",
       device_ip: "198.51.100.24",
       memo: "Net-30 wholesale grocery invoice settlement – ref: WGD-2026-0511",
     },
+    evidence_records: [
+      {
+        evidence_id: "EVID-051-SCREEN",
+        evidence_type: "SANCTIONS_PEP_SCREENING",
+        timestamp: "2026-10-16T09:14:00Z",
+        source_system: "OFAC_SDN_FIXTURE",
+        source_version: "2026-Q4",
+        provenance_type: "LOCAL_DETERMINISTIC_FIXTURE",
+        verification_status: "VERIFIED",
+        data: {
+          counterparty_name: "Wholesale Grocery Distributors Inc",
+          counterparty_country: "US",
+          match_status: "NO_MATCH",
+          list_id: "OFAC-SDN-2026-BENCHMARK",
+        },
+        is_synthetic: true,
+      },
+    ],
   },
 
   // ── SCENARIO B: Sanction Match & Geo Mismatch (CASE-021) ─────────────────
@@ -557,9 +757,29 @@ export const PRESET_SCENARIOS = {
       counterparty_account: "IR88GHH0021938172635",
       counterparty_bank: "Bank Mellat — Tehran Branch",
       counterparty_country: "IR",
+      destination_country: "IR",
       device_ip: "185.220.101.5",
       memo: "International trade financing settlement — contract ref GHH-IR-2026-0021",
     },
+    evidence_records: [
+      {
+        evidence_id: "EVID-021-SCREEN",
+        evidence_type: "SANCTIONS_PEP_SCREENING",
+        timestamp: "2026-10-16T18:10:00Z",
+        source_system: "OFAC_SDN_FIXTURE",
+        source_version: "2026-Q4",
+        provenance_type: "LOCAL_DETERMINISTIC_FIXTURE",
+        verification_status: "VERIFIED",
+        data: {
+          counterparty_name: "GLOBAL HORIZON HOLDINGS",
+          matched_name: "GLOBAL HORIZON HOLDINGS",
+          counterparty_country: "IR",
+          match_status: "CONFIRMED_MATCH",
+          list_id: "OFAC-SDN-GHH-0021",
+        },
+        is_synthetic: true,
+      },
+    ],
   },
 
   // ── SCENARIO C: Indirect Prompt Injection Attack (CASE-041) ───────────────

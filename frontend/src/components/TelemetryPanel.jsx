@@ -5,7 +5,7 @@
  *   - Hero Landing State: Centered greeting + long pill chat bar + quick chips.
  *   - Docked Workbench State: Docked pill bar in Panel 1 + telemetry baseline + sensitivity mode.
  */
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import {
   Database,
   Edit3,
@@ -23,6 +23,8 @@ import {
   ChevronRight,
   CheckCircle2,
   RotateCcw,
+  ClipboardPaste,
+  X,
 } from 'lucide-react';
 import {
   SENSITIVITY_MODE,
@@ -94,7 +96,7 @@ function EditableField({ value, onChange, multiline = false }) {
     return (
       <textarea
         rows={2}
-        value={value}
+        value={value ?? ''}
         onChange={(e) => onChange(e.target.value)}
         className={cls}
       />
@@ -103,7 +105,7 @@ function EditableField({ value, onChange, multiline = false }) {
   return (
     <input
       type="text"
-      value={value}
+      value={value ?? ''}
       onChange={(e) => onChange(e.target.value)}
       className={cls}
     />
@@ -128,10 +130,7 @@ export function GeminiPillBar({
 }) {
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
   const [isPresetDropdownOpen, setIsPresetDropdownOpen] = useState(false);
-
-  useEffect(() => {
-    setInputText('');
-  }, [resetKey, setInputText]);
+  const inputRef = useRef(null);
 
   const activeModelObj = useMemo(
     () => AVAILABLE_MODELS.find((m) => m.id === selectedModel) || AVAILABLE_MODELS[0],
@@ -150,13 +149,40 @@ export function GeminiPillBar({
     onSelectScenario?.(key);
   };
 
+  const handlePaste = (e) => {
+    const pasted = e.clipboardData?.getData('text');
+    if (pasted && (pasted.includes('\n') || pasted.includes('\r'))) {
+      e.preventDefault();
+      const target = e.target;
+      const start = target.selectionStart || 0;
+      const end = target.selectionEnd || 0;
+      const current = inputText || '';
+      const updated = current.slice(0, start) + pasted + current.slice(end);
+      setInputText(updated);
+    }
+  };
+
+  const handleClipboardPaste = async () => {
+    try {
+      if (navigator.clipboard?.readText) {
+        const text = await navigator.clipboard.readText();
+        if (text) {
+          setInputText(text);
+          inputRef.current?.focus();
+        }
+      }
+    } catch (err) {
+      console.warn('Clipboard read error:', err);
+    }
+  };
+
   const isHero = variant === 'hero';
 
   return (
     <div className={`relative w-full ${isHero ? 'max-w-2xl mx-auto' : ''}`}>
       {/* ── The Gemini Pill Container ─────────────────────────────── */}
       <div
-        className={`w-full rounded-full bg-slate-900/95 border border-slate-700/80 shadow-2xl flex items-center transition-all duration-200 backdrop-blur-md focus-within:border-cyan-500/80 focus-within:ring-2 focus-within:ring-cyan-500/25 ${isHero ? 'px-4 py-2.5 sm:px-5 sm:py-3.5 gap-2.5 sm:gap-3.5' : 'px-3.5 py-2 gap-2'
+        className={`w-full rounded-full bg-slate-900/95 border border-slate-700/80 shadow-2xl flex items-center transition-all duration-200 backdrop-blur-md focus-within:border-cyan-500/80 focus-within:ring-2 focus-within:ring-cyan-500/25 ${isHero ? 'px-4 py-2.5 sm:px-5 sm:py-3.5 gap-2 sm:gap-2.5' : 'px-3.5 py-2 gap-1.5'
           }`}
       >
         {!isHero && onResetWorkspace && (
@@ -221,14 +247,43 @@ export function GeminiPillBar({
 
         {/* Center: Seamless Transparent Input */}
         <input
+          ref={inputRef}
           type="text"
           value={inputText}
           onChange={(e) => setInputText(e.target.value)}
           onKeyDown={handleKeyDown}
+          onPaste={handlePaste}
           placeholder="Ask Ceylix AI to triage a transaction, paste SWIFT message..."
           className={`flex-1 bg-transparent text-slate-100 placeholder-slate-400/80 focus:outline-none font-sans min-w-0 ${isHero ? 'text-xs sm:text-sm' : 'text-xs'
             }`}
         />
+
+        {/* Paste from Clipboard Button */}
+        <button
+          type="button"
+          onClick={handleClipboardPaste}
+          className="p-1.5 rounded-full text-slate-400 hover:text-cyan-300 hover:bg-slate-800 transition-colors flex-shrink-0"
+          title="Paste from clipboard"
+          aria-label="Paste from clipboard"
+        >
+          <ClipboardPaste className={isHero ? 'w-4 h-4' : 'w-3.5 h-3.5'} />
+        </button>
+
+        {/* Clear Button (when text is present) */}
+        {inputText && (
+          <button
+            type="button"
+            onClick={() => {
+              setInputText('');
+              inputRef.current?.focus();
+            }}
+            className="p-1 rounded-full text-slate-400 hover:text-rose-400 hover:bg-slate-800 transition-colors flex-shrink-0"
+            title="Clear input"
+            aria-label="Clear input"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        )}
 
         {/* Right: Model Selector Pill */}
         <div className="relative flex-shrink-0">
@@ -323,20 +378,32 @@ export function GeminiHeroView({
   resetKey = 0,
 }) {
   const [inputText, setInputText] = useState('');
+  const [validationError, setValidationError] = useState(null);
 
   useEffect(() => {
     setInputText('');
+    setValidationError(null);
   }, [resetKey]);
+
+  const handleInputChange = useCallback((txt) => {
+    setInputText(txt);
+    setValidationError(null);
+  }, []);
 
   const handleSend = () => {
     if (isInvestigating) return;
     const submittedText = inputText.trim();
-    setInputText('');
     if (!submittedText) {
       onRunTriage?.(payload);
       return;
     }
-    const parsed = parseNaturalLanguageWire(submittedText, payload);
+    const parsed = parseNaturalLanguageWire(submittedText);
+    if (parsed.is_unsupported_input) {
+      setValidationError(parsed.error_message);
+      return;
+    }
+    setValidationError(null);
+    setInputText('');
     if (parsed._matchedPresetKey && onSelectScenario) {
       onSelectScenario(parsed._matchedPresetKey);
       return;
@@ -379,7 +446,7 @@ export function GeminiHeroView({
       <div className="w-full max-w-2xl z-10">
         <GeminiPillBar
           inputText={inputText}
-          setInputText={setInputText}
+          setInputText={handleInputChange}
           onSend={handleSend}
           isInvestigating={isInvestigating}
           selectedModel={selectedModel}
@@ -389,6 +456,16 @@ export function GeminiHeroView({
           resetKey={resetKey}
           variant="hero"
         />
+
+        {validationError && (
+          <div className="p-3 bg-amber-950/60 border border-amber-500/50 rounded-xl flex items-start gap-2.5 text-left text-xs text-amber-200 mt-3 animate-fade-in shadow-lg">
+            <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+            <div>
+              <span className="font-semibold block text-amber-300">Unsupported Transaction Input</span>
+              {validationError}
+            </div>
+          </div>
+        )}
 
         {/* Quick Suggestion Chips below pill bar */}
         <div className="flex flex-wrap items-center justify-center gap-2.5 mt-5">
@@ -454,21 +531,33 @@ export default function TelemetryPanel({
   resetKey = 0,
 }) {
   const [inputText, setInputText] = useState('');
+  const [validationError, setValidationError] = useState(null);
   const hasInjection = useMemo(() => hasAdversarialContent(payload), [payload]);
 
   useEffect(() => {
     setInputText('');
+    setValidationError(null);
   }, [resetKey]);
+
+  const handleInputChange = useCallback((txt) => {
+    setInputText(txt);
+    setValidationError(null);
+  }, []);
 
   const handleSend = () => {
     if (isInvestigating) return;
     const submittedText = inputText.trim();
-    setInputText('');
     if (!submittedText) {
       onRunTriage?.(payload);
       return;
     }
-    const parsed = parseNaturalLanguageWire(submittedText, payload);
+    const parsed = parseNaturalLanguageWire(submittedText);
+    if (parsed.is_unsupported_input) {
+      setValidationError(parsed.error_message);
+      return;
+    }
+    setValidationError(null);
+    setInputText('');
     if (parsed._matchedPresetKey && onSelectScenario) {
       onSelectScenario(parsed._matchedPresetKey);
       return;
@@ -505,7 +594,7 @@ export default function TelemetryPanel({
       {/* ── Docked Gemini Pill Bar at Top of Panel 1 ──────────────── */}
       <GeminiPillBar
         inputText={inputText}
-        setInputText={setInputText}
+        setInputText={handleInputChange}
         onSend={handleSend}
         isInvestigating={isInvestigating}
         selectedModel={selectedModel}
@@ -516,6 +605,17 @@ export default function TelemetryPanel({
         onResetWorkspace={onResetWorkspace}
         resetKey={resetKey}
       />
+
+      {/* ── Validation Error Alert Banner ──────────────────────────── */}
+      {validationError && (
+        <div className="p-3 bg-amber-950/60 border border-amber-500/50 rounded-xl flex items-start gap-2.5 text-left text-xs text-amber-200 animate-fade-in shadow-lg">
+          <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+          <div>
+            <span className="font-semibold block text-amber-300">Unsupported Transaction Input</span>
+            {validationError}
+          </div>
+        </div>
+      )}
 
       {/* ── Adversarial Content Warning Banner ──────────────────────── */}
       {hasInjection && (
@@ -745,7 +845,7 @@ export default function TelemetryPanel({
               )}
             </div>
             <div className="text-[10px] text-slate-500 leading-tight mt-0.5">
-              $10,000 CTR rule · Standard OFAC
+              $10,000 Large Wire Monitoring · Standard OFAC
             </div>
           </button>
 
@@ -764,7 +864,7 @@ export default function TelemetryPanel({
               )}
             </div>
             <div className="text-[10px] text-slate-500 leading-tight mt-0.5">
-              $2,500 CTR trigger · Zero tolerance
+              $2,500 Wire Monitoring · Zero tolerance
             </div>
           </button>
         </div>

@@ -47,11 +47,11 @@ def evaluate_large_amount(tx: Transaction) -> RuleEvaluationResult:
     is_large = tx.amount >= LARGE_AMOUNT_THRESHOLD
     return RuleEvaluationResult(
         rule_name="LargeAmountThresholdRule",
-        rule_description=f"Flags transactions exceeding ${LARGE_AMOUNT_THRESHOLD:,.2f} USD equivalent (CTR Reporting Threshold)",
+        rule_description=f"Flags wire transfers exceeding ${LARGE_AMOUNT_THRESHOLD:,.2f} USD equivalent (Large Wire Monitoring Threshold - BSA Travel Rule recordkeeping advisory; Note: FinCEN CTR Form 112 applies only to physical currency/cash)",
         dimension="FINANCIAL_TRANSACTION_RISK",
         passed=not is_large,
         flagged=is_large,
-        details=f"Transaction amount ${tx.amount:,.2f} {tx.currency} (Exceeds $10,000 CTR reporting threshold - mandatory regulatory recordkeeping, not independent proof of crime)",
+        details=f"Transaction amount ${tx.amount:,.2f} {tx.currency} (Exceeds $10,000 Large Wire Monitoring threshold - BSA Travel Rule recordkeeping advisory; does not require physical currency CTR Form 112 filing unless settled in cash)",
         severity="INFO",
         evidence_ids=[]
     )
@@ -62,11 +62,11 @@ def evaluate_structuring(tx: Transaction) -> RuleEvaluationResult:
     is_structuring = STRUCTURING_LOWER_BOUND <= tx.amount <= STRUCTURING_UPPER_BOUND
     return RuleEvaluationResult(
         rule_name="StructuringSmurfingRule",
-        rule_description="Flags transactions just below the $10,000 CTR reporting threshold (potential structuring)",
+        rule_description="Flags transactions just below the $10,000 threshold (potential structuring / smurfing advisory)",
         dimension="FINANCIAL_TRANSACTION_RISK",
         passed=not is_structuring,
         flagged=is_structuring,
-        details=f"Amount ${tx.amount:,.2f} in range [${STRUCTURING_LOWER_BOUND:,.2f}, ${STRUCTURING_UPPER_BOUND:,.2f}]",
+        details=f"Amount ${tx.amount:,.2f} in range [${STRUCTURING_LOWER_BOUND:,.2f}, ${STRUCTURING_UPPER_BOUND:,.2f}] (Advisory monitoring for structured amounts)",
         severity="HIGH" if is_structuring else "INFO",
         evidence_ids=[]
     )
@@ -475,7 +475,7 @@ def calculate_authoritative_risk_score(
         components["sanctions_screening"] = {
             "points": 15,
             "status": "MISSING_MANDATORY_SCREENING",
-            "rationale": "Mandatory sanctions screening unavailable for international/high-value wire (CTR requirement)",
+            "rationale": "Mandatory sanctions screening unavailable for international/high-value wire (regulatory due diligence requirement)",
         }
     else:
         components["sanctions_screening"] = {
@@ -517,7 +517,7 @@ def calculate_authoritative_risk_score(
         components["amount_and_structuring"] = {
             "points": 30,
             "amount": tx.amount,
-            "rationale": "Transaction amount structured just below $10,000 CTR reporting threshold (potential smurfing)",
+            "rationale": "Transaction amount structured just below $10,000 threshold (potential smurfing/structuring advisory)",
         }
     elif tx.amount < 500.0 and is_domestic:
         total_score -= 5
@@ -531,21 +531,21 @@ def calculate_authoritative_risk_score(
         components["amount_and_structuring"] = {
             "points": 20,
             "amount": tx.amount,
-            "rationale": "High-value international wire (> $250,000.00 CTR threshold) requiring enhanced due diligence",
+            "rationale": "High-value international wire (> $250,000.00 EDD threshold) requiring enhanced due diligence",
         }
     elif tx.amount >= 50000.0:
         total_score += 15
         components["amount_and_structuring"] = {
             "points": 15,
             "amount": tx.amount,
-            "rationale": "Elevated wire amount ($50,000 - $250,000) under standard CTR review",
+            "rationale": "Elevated wire amount ($50,000 - $250,000) under large-value wire monitoring",
         }
     elif tx.amount >= 10000.0:
         total_score += 10
         components["amount_and_structuring"] = {
             "points": 10,
             "amount": tx.amount,
-            "rationale": "Exceeds $10,000 CTR regulatory reporting threshold (standard compliance documentation required)",
+            "rationale": "Exceeds $10,000 large-value wire threshold (BSA Travel Rule recordkeeping advisory; CTR Form 112 applies strictly to physical cash)",
         }
     else:
         components["amount_and_structuring"] = {
