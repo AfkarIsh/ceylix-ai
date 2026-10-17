@@ -218,7 +218,15 @@ def execute_telemetry_probes(
     now_iso = datetime.now(timezone.utc).isoformat()
 
     # ── 1. OFAC / Watchlist Screening ─────────────────────────────────────────
-    existing_sanctions = next((r for r in records if r.evidence_type == "SANCTIONS_PEP_SCREENING"), None)
+    existing_sanctions = next(
+        (
+            r for r in records
+            if r.evidence_type == "SANCTIONS_PEP_SCREENING"
+            and (r.transaction_id or r.data.get("transaction_id")) in (None, transaction.transaction_id)
+            and (r.customer_id or r.data.get("customer_id")) in (None, transaction.customer_id)
+        ),
+        None,
+    )
     cparty = transaction.counterparty_name or "Unknown Counterparty"
     cparty_country = (transaction.counterparty_country or "US").upper()
 
@@ -264,50 +272,89 @@ def execute_telemetry_probes(
         }
 
     # ── 2. Device / IP Telemetry Probe ────────────────────────────────────────
-    existing_telemetry = next((r for r in records if r.evidence_type == "DEVICE_IP_TELEMETRY"), None)
+    existing_telemetry = next(
+        (
+            r for r in records
+            if r.evidence_type == "DEVICE_IP_TELEMETRY"
+            and (r.transaction_id or r.data.get("transaction_id")) in (None, transaction.transaction_id)
+            and (r.customer_id or r.data.get("customer_id")) in (None, transaction.customer_id)
+        ),
+        None,
+    )
     ip_addr = transaction.ip_address or "198.51.100.24"
-    vpn_or_proxy = ip_addr.startswith("185.220.") or ip_addr.startswith("103.251.")
+    is_rfc5737 = (
+        ip_addr.startswith("192.0.2.")
+        or ip_addr.startswith("198.51.100.")
+        or ip_addr.startswith("203.0.113.")
+    )
+    vpn_or_proxy = (
+        ip_addr.startswith("185.220.")
+        or ip_addr.startswith("103.251.")
+        or (existing_telemetry and existing_telemetry.data.get("vpn_or_proxy_detected", False))
+    )
 
     if not existing_telemetry:
         telemetry_rec = EvidenceRecord(
             evidence_id=f"EVID-TELEMETRY-{transaction.transaction_id}",
             evidence_type="DEVICE_IP_TELEMETRY",
+            case_id=getattr(transaction, "case_id", None),
+            transaction_id=transaction.transaction_id,
+            customer_id=transaction.customer_id,
             timestamp=now_iso,
             source_system="FraudNet_Telemetry",
             data={
                 "ip_address": ip_addr,
                 "known_device_ids": [transaction.device_id or "DEV-REGISTERED-01"],
-                "vpn_or_proxy_detected": vpn_or_proxy,
-                "asn": "AS15169",
-                "isp": "Enterprise IP Routing",
-                "trust_score": 45 if vpn_or_proxy else 98,
+                "vpn_or_proxy_detected": bool(vpn_or_proxy),
+                "is_rfc5737_reserved_test_ip": bool(is_rfc5737),
+                "asn": "AS15169" if not is_rfc5737 else "AS-TEST-RESERVED",
+                "isp": "Enterprise IP Routing" if not is_rfc5737 else "RFC 5737 Documentation Benchmark",
+                "trust_score": 45 if vpn_or_proxy else (90 if is_rfc5737 else 98),
             },
             is_synthetic=True,
         )
         records.append(telemetry_rec)
-        ip_detail = (
-            f"IP {ip_addr} resolved: Proxy / VPN detected. Network routing obscured. "
-            "(Note: Proxy obfuscation denotes network routing risk; does not independently establish illicit financial activity)."
-            if vpn_or_proxy
-            else f"IP {ip_addr} resolved: Standard residential/corporate routing. No proxy or VPN detected."
-        )
+        if vpn_or_proxy:
+            ip_detail = (
+                f"IP {ip_addr} resolved: Proxy / VPN detected. Network routing obscured "
+                "(Note: Proxy obfuscation denotes network routing risk; does not independently establish illicit financial activity)."
+            )
+        elif is_rfc5737:
+            ip_detail = (
+                f"IP {ip_addr} is an RFC 5737 reserved documentation test address. "
+                "Benchmark test fixture; no real-world residential or corporate geolocation established. "
+                "No proxy or VPN detected."
+            )
+        else:
+            ip_detail = f"IP {ip_addr} resolved: Standard routing. No proxy or VPN detected."
+
         probe_statuses["ip_geo"] = {
             "status": "MATCHED" if vpn_or_proxy else "CLEAR",
             "detail": ip_detail,
             "evidence_id": telemetry_rec.evidence_id,
             "source_type": "LOCAL_DETERMINISTIC_FIXTURE",
-            "source_label": "Local Rule (Deterministic Benchmark Fixture)",
+            "source_label": "RFC 5737 Documentation Benchmark Fixture" if is_rfc5737 else "Local Rule (Deterministic Benchmark Fixture)",
             "verified": False,
             "verified_live": False,
         }
     else:
         vpn = existing_telemetry.data.get("vpn_or_proxy_detected", False)
-        ip_detail = (
-            f"Telemetry record {existing_telemetry.evidence_id}: Proxy / VPN detected. "
-            "(Note: Proxy obfuscation denotes network routing risk; does not independently establish illicit financial activity)."
-            if vpn
-            else f"Telemetry record {existing_telemetry.evidence_id}: Clean IP routing (VPN={vpn})."
-        )
+        if vpn_or_proxy and not vpn:
+            vpn = True
+        if vpn:
+            ip_detail = (
+                f"Telemetry record {existing_telemetry.evidence_id}: Proxy / VPN detected. "
+                "(Note: Proxy obfuscation denotes network routing risk; does not independently establish illicit financial activity)."
+            )
+        elif is_rfc5737:
+            ip_detail = (
+                f"Telemetry record {existing_telemetry.evidence_id}: RFC 5737 documentation test address ({ip_addr}). "
+                "Benchmark fixture; no real-world residential or corporate geolocation established. "
+                "No proxy or VPN detected."
+            )
+        else:
+            ip_detail = f"Telemetry record {existing_telemetry.evidence_id}: Clean IP routing (VPN={vpn})."
+
         probe_statuses["ip_geo"] = {
             "status": "MATCHED" if vpn else "CLEAR",
             "detail": ip_detail,
@@ -319,7 +366,15 @@ def execute_telemetry_probes(
         }
 
     # ── 3. Core KYC & Account History ─────────────────────────────────────────
-    existing_kyc = next((r for r in records if r.evidence_type == "KYC_PROFILE"), None)
+    existing_kyc = next(
+        (
+            r for r in records
+            if r.evidence_type == "KYC_PROFILE"
+            and (r.transaction_id or r.data.get("transaction_id")) in (None, transaction.transaction_id)
+            and (r.customer_id or r.data.get("customer_id")) in (None, transaction.customer_id)
+        ),
+        None,
+    )
     if not existing_kyc:
         kyc_rec = EvidenceRecord(
             evidence_id=f"EVID-KYC-{transaction.transaction_id}",

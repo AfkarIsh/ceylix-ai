@@ -3,7 +3,7 @@ Deterministic transaction risk rules for Ceylix AI.
 These rules run explicitly over case data to provide transparent, inspectable risk signals.
 """
 
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
 try:
     from backend.app.schemas import (
@@ -47,14 +47,15 @@ def evaluate_large_amount(tx: Transaction) -> RuleEvaluationResult:
     is_large = tx.amount >= LARGE_AMOUNT_THRESHOLD
     return RuleEvaluationResult(
         rule_name="LargeAmountThresholdRule",
-        rule_description=f"Flags transactions exceeding ${LARGE_AMOUNT_THRESHOLD:,.2f} USD equivalent",
+        rule_description=f"Flags transactions exceeding ${LARGE_AMOUNT_THRESHOLD:,.2f} USD equivalent (CTR Reporting Threshold)",
         dimension="FINANCIAL_TRANSACTION_RISK",
         passed=not is_large,
         flagged=is_large,
-        details=f"Transaction amount ${tx.amount:,.2f} {tx.currency} (Threshold: ${LARGE_AMOUNT_THRESHOLD:,.2f})",
-        severity="HIGH" if is_large else "INFO",
+        details=f"Transaction amount ${tx.amount:,.2f} {tx.currency} (Exceeds $10,000 CTR reporting threshold - mandatory regulatory recordkeeping, not independent proof of crime)",
+        severity="INFO",
         evidence_ids=[]
     )
+
 
 
 def evaluate_structuring(tx: Transaction) -> RuleEvaluationResult:
@@ -398,3 +399,253 @@ def build_risk_dimension_breakdown(
         data_quality_input_intent=data_quality,
         evidence_completeness_confidence=evidence_confidence,
     )
+
+
+def calculate_authoritative_risk_score(
+    case: InvestigationCase,
+    rule_results: List[RuleEvaluationResult],
+    val_report: Optional[Any] = None,
+    intent_result: Optional[Any] = None,
+    probes: Optional[Dict[str, Any]] = None,
+) -> Tuple[int, Dict[str, Any]]:
+    """
+    Authoritative, deterministic, reproducible risk scoring engine for Ceylix AI.
+    BFSI Compliance Policy Version: 2026.1-REGULATORY-DETERMINISTIC.
+
+    Formula and component weights:
+      - Base baseline: 5
+      - Sanctions match: +60 (confirmed entity match), +35 (potential/PEP), +15 (missing mandatory screening)
+      - Jurisdiction: +25 (FATF high-risk blacklist)
+      - Amount & Structuring:
+          * Intentional structuring ($9k-$10k): +30
+          * CTR reporting threshold ($10k-$50k): +10
+          * Elevated wire ($50k-$250k): +15
+          * High-value international wire (> $250k): +20
+          * Low-value domestic retail (< $500): -5
+      - Customer KYC: +20 (unverified KYC on >= $500)
+      - Velocity Anomaly: +15 (> 5x 30d baseline)
+      - Device Telemetry: +15 (proxy/VPN anonymization; 0 for clean or RFC 5737 test IP)
+      - Adversarial Injection: +40 (prompt injection attack detected)
+      - Content/Intent Mismatch: +5 (non-financial administrative mismatch)
+
+    Returns:
+      (authoritative_score: int, score_breakdown: Dict[str, Any])
+    """
+    tx = case.transaction
+    components: Dict[str, Dict[str, Any]] = {}
+    total_score = 5
+    components["base_baseline"] = {"points": 5, "rationale": "Standard baseline transactional scrutiny"}
+
+    # 1. Sanctions screening component
+    bound_records = [
+        record for record in case.evidence_records
+        if evidence_belongs_to_case(record, case)
+    ]
+    sanctions_rec = find_evidence_by_type(bound_records, "SANCTIONS_PEP_SCREENING")
+    match_status = (
+        usable_entity_sanctions_status(sanctions_rec, tx)
+        if sanctions_rec else "UNKNOWN"
+    )
+    is_confirmed_hit = (match_status == "CONFIRMED_MATCH")
+    is_potential_hit = (match_status in ("POTENTIAL_MATCH", "PEP_HIT"))
+
+    # Missing mandatory screening check on high-value wires (>= $10,000)
+    is_mandatory_screening_missing = (
+        tx.amount >= 10000.0
+        and (sanctions_rec is None or match_status == "UNKNOWN")
+        and (not sanctions_rec or sanctions_rec.data.get("match_status") != "NO_MATCH")
+    )
+
+    if is_confirmed_hit:
+        total_score += 60
+        components["sanctions_screening"] = {
+            "points": 60,
+            "status": "CONFIRMED_MATCH",
+            "rationale": "Authoritative confirmed entity sanctions match on OFAC/Watchlist",
+        }
+    elif is_potential_hit:
+        total_score += 35
+        components["sanctions_screening"] = {
+            "points": 35,
+            "status": match_status,
+            "rationale": f"Watchlist screening hit flagged: {match_status}",
+        }
+    elif is_mandatory_screening_missing:
+        total_score += 15
+        components["sanctions_screening"] = {
+            "points": 15,
+            "status": "MISSING_MANDATORY_SCREENING",
+            "rationale": "Mandatory sanctions screening unavailable for international/high-value wire (CTR requirement)",
+        }
+    else:
+        components["sanctions_screening"] = {
+            "points": 0,
+            "status": "CLEAR" if match_status == "NO_MATCH" else "UNKNOWN",
+            "rationale": "No confirmed or potential entity sanctions match",
+        }
+
+    # 2. Jurisdiction component
+    c_country = tx.counterparty_country.upper()
+    is_embargoed_country = c_country in {"IR", "KP", "SY", "CU"}
+    is_high_risk_country = c_country in HIGH_RISK_JURISDICTIONS
+    if is_embargoed_country:
+        total_score += 65
+        components["corridor_jurisdiction"] = {
+            "points": 65,
+            "country": tx.counterparty_country,
+            "rationale": f"Comprehensively sanctioned / embargoed jurisdiction ({tx.counterparty_country}) under OFAC/FATF blacklist",
+        }
+    elif is_high_risk_country:
+        total_score += 25
+        components["corridor_jurisdiction"] = {
+            "points": 25,
+            "country": tx.counterparty_country,
+            "rationale": f"High-risk / secrecy jurisdiction ({tx.counterparty_country}) on FATF watchlist",
+        }
+    else:
+        components["corridor_jurisdiction"] = {
+            "points": 0,
+            "country": tx.counterparty_country,
+            "rationale": f"Standard compliant corridor ({tx.origin_country or 'US'} -> {tx.counterparty_country})",
+        }
+
+    # 3. Financial Amount and Structuring component
+    is_structuring = (STRUCTURING_LOWER_BOUND <= tx.amount <= STRUCTURING_UPPER_BOUND)
+    is_domestic = (tx.origin_country or "US").upper() == (tx.counterparty_country or "US").upper()
+    if is_structuring:
+        total_score += 30
+        components["amount_and_structuring"] = {
+            "points": 30,
+            "amount": tx.amount,
+            "rationale": "Transaction amount structured just below $10,000 CTR reporting threshold (potential smurfing)",
+        }
+    elif tx.amount < 500.0 and is_domestic:
+        total_score -= 5
+        components["amount_and_structuring"] = {
+            "points": -5,
+            "amount": tx.amount,
+            "rationale": "Low-value domestic retail transaction (< $500.00) qualifying for reflex clearance discount",
+        }
+    elif tx.amount > 250000.0:
+        total_score += 20
+        components["amount_and_structuring"] = {
+            "points": 20,
+            "amount": tx.amount,
+            "rationale": "High-value international wire (> $250,000.00 CTR threshold) requiring enhanced due diligence",
+        }
+    elif tx.amount >= 50000.0:
+        total_score += 15
+        components["amount_and_structuring"] = {
+            "points": 15,
+            "amount": tx.amount,
+            "rationale": "Elevated wire amount ($50,000 - $250,000) under standard CTR review",
+        }
+    elif tx.amount >= 10000.0:
+        total_score += 10
+        components["amount_and_structuring"] = {
+            "points": 10,
+            "amount": tx.amount,
+            "rationale": "Exceeds $10,000 CTR regulatory reporting threshold (standard compliance documentation required)",
+        }
+    else:
+        components["amount_and_structuring"] = {
+            "points": 0,
+            "amount": tx.amount,
+            "rationale": "Sub-threshold transaction amount within normal limits",
+        }
+
+    # 4. Customer KYC component
+    kyc_rec = find_evidence_by_type(bound_records, "KYC_PROFILE")
+    kyc_status = kyc_rec.data.get("verification_status", "UNVERIFIED") if kyc_rec else "UNVERIFIED"
+    if kyc_status != "VERIFIED" and tx.amount >= 500.0 and kyc_rec is not None:
+        total_score += 20
+        components["customer_kyc"] = {
+            "points": 20,
+            "status": kyc_status,
+            "rationale": f"Customer KYC profile verification status is '{kyc_status}' on transaction >= $500",
+        }
+    else:
+        components["customer_kyc"] = {
+            "points": 0,
+            "status": kyc_status if kyc_rec else "OMITTED_OPTIONAL",
+            "rationale": "Customer KYC profile verified or within standard parameters",
+        }
+
+    # 5. Velocity anomaly component
+    history_rec = find_evidence_by_type(bound_records, "ACCOUNT_HISTORY")
+    avg_amount = float(history_rec.data.get("avg_30d_transaction_amount", 1000.0)) if history_rec else 1000.0
+    is_velocity = (tx.amount >= 500.0 and avg_amount > 0 and tx.amount / avg_amount >= 5.0)
+    if is_velocity:
+        total_score += 15
+        components["velocity_anomaly"] = {
+            "points": 15,
+            "ratio": round(tx.amount / avg_amount, 1),
+            "rationale": f"Transaction volume {tx.amount / avg_amount:.1f}x higher than 30-day baseline average",
+        }
+    else:
+        components["velocity_anomaly"] = {
+            "points": 0,
+            "rationale": "Transaction velocity consistent with historical baseline",
+        }
+
+    # 6. Device & Network Telemetry component
+    telemetry_rec = find_evidence_by_type(bound_records, "DEVICE_IP_TELEMETRY")
+    ip_str = tx.ip_address or (telemetry_rec.data.get("ip_address") if telemetry_rec else "")
+    vpn_active = telemetry_rec.data.get("vpn_or_proxy_detected", False) if telemetry_rec else False
+    if not vpn_active and ip_str and (ip_str.startswith("185.220.") or ip_str.startswith("103.251.")):
+        vpn_active = True
+
+    if vpn_active:
+        total_score += 15
+        components["device_telemetry"] = {
+            "points": 15,
+            "ip": ip_str,
+            "rationale": "Proxy / VPN anonymization detected on client IP (network routing risk; does not prove financial crime)",
+        }
+    else:
+        components["device_telemetry"] = {
+            "points": 0,
+            "ip": ip_str,
+            "rationale": "Clean IP routing or RFC 5737 documentation test fixture",
+        }
+
+    # 7. Adversarial untrusted instructions
+    if val_report and val_report.untrusted_instruction_detected:
+        total_score += 40
+        components["adversarial_injection"] = {
+            "points": 40,
+            "rationale": "Adversarial system override or prompt injection attempt detected in payment instruction",
+        }
+    else:
+        components["adversarial_injection"] = {
+            "points": 0,
+            "rationale": "No prompt injection or adversarial override tokens detected",
+        }
+
+    # 8. Content / Intent Mismatch
+    if intent_result and not intent_result.is_compatible_with_financial_triage:
+        total_score += 5
+        components["intent_mismatch"] = {
+            "points": 5,
+            "intent": intent_result.intent,
+            "rationale": f"Payment instruction text contains unrelated {intent_result.intent} content (quarantined)",
+        }
+    else:
+        components["intent_mismatch"] = {
+            "points": 0,
+            "rationale": "Valid financial transaction instruction format",
+        }
+
+    clamped_score = max(0, min(100, total_score))
+    risk_level = "LOW" if clamped_score < 30 else ("MEDIUM" if clamped_score < 70 else "HIGH")
+
+    breakdown = {
+        "policy_version": "2026.1-REGULATORY-DETERMINISTIC",
+        "authoritative_score": clamped_score,
+        "preliminary_risk_level": risk_level,
+        "base_score": 5,
+        "components": components,
+    }
+
+    return clamped_score, breakdown
+

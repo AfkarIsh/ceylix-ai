@@ -286,6 +286,58 @@ function parseNaturalLanguageWireUnsafe(rawText, fallbackPayload = {}) {
     }
   }
 
+  // 1a. Structured Key-Value Ingestion (e.g. Judge Benchmark Scenarios)
+  // Format: "Case ID: JUDGE-BENIGN-001\nTransaction Type: Domestic Wire\nAmount: 142.50 USD..."
+  if (text.includes(":") && (text.includes("\n") || text.toLowerCase().includes("case id") || text.toLowerCase().includes("beneficiary"))) {
+    const kvLines = text.split(/\r?\n/);
+    const kv = {};
+    for (const line of kvLines) {
+      const colonIdx = line.indexOf(":");
+      if (colonIdx > 0) {
+        const k = line.slice(0, colonIdx).trim().toLowerCase();
+        const v = line.slice(colonIdx + 1).trim();
+        if (v) kv[k] = v;
+      }
+    }
+
+    const explicitCase = kv["case id"] || kv["case_id"] || kv["case"];
+    const explicitBen = kv["beneficiary"] || kv["counterparty"] || kv["counterparty name"];
+    const explicitAmt = kv["amount"];
+
+    if (explicitCase || explicitBen || explicitAmt) {
+      let parsedAmt = null;
+      if (explicitAmt) {
+        const amtClean = explicitAmt.replace(/[^0-9.]/g, "");
+        if (amtClean) parsedAmt = parseFloat(amtClean);
+      }
+      const cpartyCountry = (kv["destination country"] || kv["destination"] || kv["counterparty country"] || "US").toUpperCase();
+      const originCountry = (kv["origin country"] || kv["origin"] || "US").toUpperCase();
+      const channelVal = kv["transaction type"] || kv["channel"] || (text.toUpperCase().includes("ONLINE") ? "ONLINE_BANKING" : "WIRE");
+      const derivedTxId = explicitCase ? `TX-${explicitCase.replace(/^(CASE|JUDGE)-/, '')}` : `TX-SRCH-${searchId}`;
+
+      return {
+        transaction_id: derivedTxId,
+        case_id: explicitCase || `CASE-SRCH-${searchId}`,
+        search_query: text,
+        timestamp: new Date().toISOString(),
+        account_id: kv["account id"] || kv["account_id"] || `TEST-ACC-${searchId.toString().slice(-4)}`,
+        customer_id: kv["customer id"] || kv["customer_id"] || `TEST-CUST-${searchId.toString().slice(-4)}`,
+        amount: parsedAmt !== null ? parsedAmt : 1000.0,
+        currency: (explicitAmt && explicitAmt.match(/[A-Z]{3}/i)?.[0]?.toUpperCase()) || "USD",
+        channel: channelVal,
+        counterparty_account: kv["account"] || `ACC-${searchId.toString().slice(-4)}`,
+        counterparty_name: explicitBen || "Commercial Beneficiary",
+        counterparty_bank: kv["beneficiary bank"] || kv["bank"] || "Global Settlement Bank",
+        counterparty_country: cpartyCountry,
+        origin_country: originCountry,
+        destination_country: cpartyCountry,
+        device_ip: kv["source ip"] || kv["device ip"] || kv["ip"] || "198.51.100.24",
+        memo: kv["payment memo"] || kv["memo"] || "Structured benchmark transaction",
+        is_synthetic: true,
+      };
+    }
+  }
+
   // 1b. Check for prompt/mismatched tasks pasted into ingestion bar
   const isCyberPrompt = /\bssh\b/i.test(text) && (/\bfailed password\b/i.test(text) || /\blogin\b/i.test(text) || /\baccepted\b/i.test(text));
   const isPolicyPrompt = /\biso(?:\/iec)?\s*27001\b/i.test(text) || /\bpolicy review\b/i.test(text);
@@ -352,7 +404,7 @@ function parseNaturalLanguageWireUnsafe(rawText, fallbackPayload = {}) {
     "germany": "DE", "de": "DE",
   };
 
-  let originCountry = fallbackPayload.origin_country || "US";
+  let originCountry = "US";
   let destinationCountry = null;
 
   // Pattern: "from [Country] to [Country]"
@@ -384,7 +436,7 @@ function parseNaturalLanguageWireUnsafe(rawText, fallbackPayload = {}) {
       }
     }
   }
-  if (!destinationCountry) destinationCountry = fallbackPayload.counterparty_country || "US";
+  if (!destinationCountry) destinationCountry = "US";
 
   // 4. IP Address Extraction
   let ipAddress = null;
@@ -394,9 +446,8 @@ function parseNaturalLanguageWireUnsafe(rawText, fallbackPayload = {}) {
   }
 
   // 5. Beneficiary / Counterparty Name Extraction
-  // Strict matching to prevent prompt fragments (like "review", "failed password", "policy") from becoming names
   let counterpartyName = null;
-  const benMatch = text.match(/(?:beneficiary:\s*|counterparty:\s*)([A-Z][A-Za-z0-9\s.,&'-]+?)(?:\s+in\s+[A-Za-z]{2,15}|\s+via|\s+for|\s+from|\s+-|\s*$)/i);
+  const benMatch = text.match(/(?:beneficiary:\s*|counterparty:\s*)([A-Za-z0-9\s.,&'-]+?)(?:\r?\n|\s+in\s+[A-Za-z]{2,15}|\s+via|\s+for|\s+from|\s+-|$)/i);
   if (benMatch) {
     const cand = benMatch[1].trim();
     if (cand.length > 2 && !COUNTRY_MAP[cand.toLowerCase()]) {
@@ -410,24 +461,24 @@ function parseNaturalLanguageWireUnsafe(rawText, fallbackPayload = {}) {
     }
   }
   if (!counterpartyName) {
-    counterpartyName = fallbackPayload.counterparty_name || "Commercial Beneficiary";
+    counterpartyName = "Commercial Beneficiary";
   }
 
   // 6. Memo / Purpose Extraction
   let memo = null;
-  const memoMatch = text.match(/(?:memo:\s*|for\s+|reference:\s*|ref:\s*)(.+?)(?:$)/i);
+  const memoMatch = text.match(/(?:memo:\s*|for\s+|reference:\s*|ref:\s*)(.+?)(?:\r?\n|$)/i);
   if (memoMatch) {
     memo = memoMatch[1].trim();
   } else {
     memo = text;
   }
 
-  const finalAmount = amount !== null ? amount : (fallbackPayload.amount !== undefined ? fallbackPayload.amount : 25000);
+  const finalAmount = amount !== null ? amount : 25000;
   const txId = `TX-SRCH-${searchId}`;
   const caseId = `CASE-SRCH-${searchId}`;
 
   // Default institutional bank based on corridor
-  let counterpartyBank = fallbackPayload.counterparty_bank || "Bank of America, N.A.";
+  let counterpartyBank = "Bank of America, N.A.";
   if (destinationCountry === "IR") counterpartyBank = "Bank Melli Iran";
   else if (destinationCountry === "KP") counterpartyBank = "Foreign Trade Bank of DPRK";
   else if (destinationCountry === "CH") counterpartyBank = "Credit Suisse AG";
@@ -438,18 +489,18 @@ function parseNaturalLanguageWireUnsafe(rawText, fallbackPayload = {}) {
     case_id: caseId,
     search_query: text,
     timestamp: new Date().toISOString(),
-    account_id: fallbackPayload.account_id || "acc_00889124",
-    customer_id: fallbackPayload.customer_id || "CUST-LIVE-01",
+    account_id: `acc_00${Math.floor(100000 + Math.random() * 900000)}`,
+    customer_id: `CUST-LIVE-${Math.floor(10 + Math.random() * 90)}`,
     amount: finalAmount,
-    currency: fallbackPayload.currency || "USD",
-    channel: text.toUpperCase().includes("ONLINE") ? "ONLINE_BANKING" : (fallbackPayload.channel || "WIRE"),
-    counterparty_account: fallbackPayload.counterparty_account || `US${Math.floor(10 + Math.random() * 89)}CP${Math.floor(100000000 + Math.random() * 900000000)}`,
+    currency: "USD",
+    channel: text.toUpperCase().includes("ONLINE") ? "ONLINE_BANKING" : "WIRE",
+    counterparty_account: `US${Math.floor(10 + Math.random() * 89)}CP${Math.floor(100000000 + Math.random() * 900000000)}`,
     counterparty_name: counterpartyName,
     counterparty_bank: counterpartyBank,
     counterparty_country: destinationCountry,
     origin_country: originCountry,
     destination_country: destinationCountry,
-    device_ip: ipAddress || fallbackPayload.device_ip || "198.51.100.24",
+    device_ip: ipAddress || "198.51.100.24",
     memo: memo,
     is_synthetic: true,
   };

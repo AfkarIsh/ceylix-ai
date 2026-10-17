@@ -267,6 +267,8 @@ export default function DossierPanel({
     quarantinedClaims.length > 0;
   const workflowType = result?.workflow_type === 'validated_deterministic' ? 'Validated' : (result?.workflow_type ? 'Baseline' : 'Standby');
   const riskLevel = result?.preliminary_risk_level || (isInvestigating ? 'ANALYZING' : 'PENDING');
+  const displayTx = result?.transaction || payload;
+  const displayCaseId = result?.case_id || caseId;
 
   return (
     <section className="bg-slate-900/60 border border-slate-800 rounded-xl p-5 flex flex-col shadow-xl">
@@ -280,7 +282,7 @@ export default function DossierPanel({
           </h2>
         </div>
         <span className="text-[10px] font-mono text-slate-500 bg-slate-950/60 border border-slate-800 px-2 py-0.5 rounded">
-          {caseId}
+          {displayCaseId}
         </span>
       </div>
 
@@ -344,7 +346,7 @@ export default function DossierPanel({
                       Factual Indicators:
                     </span>
                     <span className="text-slate-300">
-                      Amount: {payload?.currency || 'USD'} {Number(payload?.amount || 0).toLocaleString()} · Corridor: {payload?.origin_country || 'US'} → {payload?.counterparty_country || payload?.destination_country || 'US'} · Beneficiary: {payload?.counterparty_name || 'N/A'} · Settlement Bank: {payload?.counterparty_bank || 'N/A'}
+                      Amount: {displayTx?.currency || 'USD'} {Number(displayTx?.amount || 0).toLocaleString()} · Corridor: {displayTx?.origin_country || 'US'} → {displayTx?.counterparty_country || displayTx?.destination_country || 'US'} · Beneficiary: {displayTx?.counterparty_name || 'N/A'} · Settlement Bank: {displayTx?.counterparty_bank || 'N/A'}
                     </span>
                   </div>
 
@@ -386,6 +388,27 @@ export default function DossierPanel({
             </div>
           )}
         </div>
+
+        {/* Deterministic System Findings & Advisory Notices */}
+        {!isInvestigating && ((result?.system_findings && result.system_findings.length > 0) || (result?.warnings && result.warnings.length > 0)) && (
+          <div className="p-3.5 bg-amber-950/20 rounded-lg border border-amber-800/60 animate-fade-in">
+            <div className="flex items-center gap-2 text-amber-400 text-[11px] font-bold uppercase tracking-wider mb-2">
+              <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+              <span>Deterministic System Findings & Advisory Notices</span>
+            </div>
+            <div className="space-y-1.5">
+              {(result.system_findings && result.system_findings.length > 0
+                ? result.system_findings
+                : (result.warnings || []).map((w, idx) => ({ id: `SYS-${idx}`, message: w, type: "ADVISORY" }))
+              ).map((finding) => (
+                <div key={finding.id} className="text-[10px] p-2 rounded bg-amber-950/40 border border-amber-900/50 text-amber-200">
+                  <span className="font-semibold text-amber-300 mr-1.5">[{finding.type || "SYSTEM NOTICE"}]:</span>
+                  {finding.message}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Novel-Threat Multivariate Anomaly Indicator (Phase 8) */}
         {!isInvestigating && result && result.anomaly_score != null && (

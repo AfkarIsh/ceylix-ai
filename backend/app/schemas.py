@@ -261,6 +261,10 @@ class InvestigationReport(BaseModel):
     )
     abstention_reasons: List[str] = Field(default_factory=list, description="Specific defect or escalation reasons")
     warnings: List[str] = Field(default_factory=list, description="Advisory notices")
+    quarantined_evidence: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Evidence and claims rejected by deterministic grounding checks",
+    )
     latency_ms: float = Field(default=0.0, description="Total workflow processing time in milliseconds")
     timestamp: str = Field(description="Timestamp of report generation")
     input_intent: Optional[str] = Field(default="TRANSACTION_INVESTIGATION", description="Input intent classification")
@@ -268,6 +272,10 @@ class InvestigationReport(BaseModel):
     telemetry_probes: Optional[Dict[str, Any]] = Field(default=None, description="Deterministic telemetry probe execution statuses")
     anomaly_score: Optional[float] = Field(default=None, description="Experimental novel-threat multivariate anomaly score")
     anomaly_details: Optional[Dict[str, Any]] = Field(default=None, description="Novel-threat detector feature breakdown")
+    risk_score: int = Field(default=10, description="Authoritative deterministic risk score 0-100")
+    calibrated_score: Optional[int] = Field(default=None, description="Convenience alias for risk_score")
+    risk_score_breakdown: Optional[Dict[str, Any]] = Field(default=None, description="Detailed score calculation components and policy weights")
+    transaction: Optional[Transaction] = Field(default=None, description="Authoritative transaction snapshot bound to this investigation")
 
     @model_validator(mode="before")
     @classmethod
@@ -277,4 +285,8 @@ class InvestigationReport(BaseModel):
                 data["workflow_type"] = data["workflow"]
             if "workflow_type" in data and not data.get("workflow"):
                 data["workflow"] = data["workflow_type"]
+            if "risk_score" in data and "calibrated_score" not in data:
+                data["calibrated_score"] = data["risk_score"]
+            elif "calibrated_score" in data and "risk_score" not in data:
+                data["risk_score"] = data["calibrated_score"]
         return data

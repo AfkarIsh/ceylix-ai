@@ -22,6 +22,19 @@ except ModuleNotFoundError:
         Transaction,
     )
 
+
+def evidence_belongs_to_transaction(
+    record: EvidenceRecord,
+    transaction: Transaction,
+) -> bool:
+    """Require every explicit transaction/customer binding to match exactly."""
+    bound_transaction = record.transaction_id or record.data.get("transaction_id")
+    bound_customer = record.customer_id or record.data.get("customer_id")
+    return (
+        (bound_transaction is None or str(bound_transaction) == transaction.transaction_id)
+        and (bound_customer is None or str(bound_customer) == transaction.customer_id)
+    )
+
 # Maximum allowable age (in days) before evidence is classified as STALE
 EVIDENCE_FRESHNESS_LIMITS_DAYS: Dict[str, float] = {
     "KYC_PROFILE": 730.0,            # 2 years
@@ -72,11 +85,20 @@ def usable_entity_sanctions_status(
     if status not in {"CONFIRMED_MATCH", "POTENTIAL_MATCH", "PEP_HIT"}:
         return "UNKNOWN"
 
-    matched_name = record.data.get("matched_name") or record.data.get("counterparty_name")
+    matched_name = (
+        record.data.get("matched_name")
+        or record.data.get("matched_entity")
+        or record.data.get("counterparty_name")
+    )
     matched_account = record.data.get("matched_account") or record.data.get("counterparty_account")
     exact_name = bool(matched_name) and _normalized_entity(matched_name) == _normalized_entity(transaction.counterparty_name)
     exact_account = bool(matched_account) and str(matched_account).strip() == str(transaction.counterparty_account).strip()
-    has_list_reference = bool(record.data.get("list_id") or record.data.get("source_record_id") or record.source_version)
+    has_list_reference = bool(
+        record.data.get("list_id")
+        or record.data.get("list_record_id")
+        or record.data.get("source_record_id")
+        or record.source_version
+    )
     has_source = bool(record.source_system and record.evidence_id and record.timestamp)
 
     if not (has_source and has_list_reference and (exact_name or exact_account)):
@@ -127,6 +149,7 @@ class ValidationReport:
         self.untrusted_instruction_detected: bool = False
         self.untrusted_instruction_details: List[str] = []
         self.validation_warnings: List[str] = []
+        self.quarantined_evidence: List[Dict[str, Any]] = []
 
 
 def detect_untrusted_instructions(case: InvestigationCase) -> Tuple[bool, List[str]]:
@@ -567,6 +590,14 @@ def perform_deterministic_validation(
         report.validation_warnings.append(
             f"Evidence records rejected for case binding mismatch: {foreign_records}"
         )
+        report.quarantined_evidence.extend(
+            {
+                "evidence_id": evidence_id,
+                "reason": "CASE_BINDING_MISMATCH",
+                "status": "QUARANTINED",
+            }
+            for evidence_id in foreign_records
+        )
 
     # 1. Untrusted instructions
     inj_detected, inj_details = detect_untrusted_instructions(case)
@@ -621,6 +652,15 @@ def perform_deterministic_validation(
         # Traceability: claim cites valid existing evidence ID(s)
         if c.evidence_ids and all(eid in evidence_id_set for eid in c.evidence_ids):
             report.traceable_claims_count += 1
+        if c.support_status != "supported":
+            report.quarantined_evidence.append(
+                {
+                    "claim_id": c.claim_id,
+                    "evidence_ids": c.evidence_ids,
+                    "reason": c.validation_notes or c.support_status,
+                    "status": "QUARANTINED",
+                }
+            )
 
     return report
 

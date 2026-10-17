@@ -70,10 +70,13 @@ def evaluate_review_policy(
         for r in critical_sanctions_flags:
             abstention_reasons.append(f"RULE_TRIGGERED:{r.rule_name}")
 
-    # General high severity rule flags (e.g. LargeAmountThresholdRule) add warnings for qualified release
-    high_severity_flags = [r for r in rule_results if r.flagged and r.severity == "HIGH"]
-    for r in high_severity_flags:
-        warnings.append(f"High risk rule flag: {r.rule_name} - {r.details}")
+    # Flagged rules (e.g. LargeAmountThresholdRule, high/medium severity rules) add advisory warnings for qualified release
+    advisory_flags = [
+        r for r in rule_results
+        if r.flagged and (r.severity in ("HIGH", "MEDIUM") or r.rule_name == "LargeAmountThresholdRule")
+    ]
+    for r in advisory_flags:
+        warnings.append(f"Advisory rule flag: {r.rule_name} - {r.details}")
 
     # Final Decision Calculation
     if abstention_reasons:

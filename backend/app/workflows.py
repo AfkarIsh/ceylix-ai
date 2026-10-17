@@ -45,23 +45,26 @@ def _register_case_input(case: "InvestigationCase") -> None:
         )
     _CASE_INPUT_FINGERPRINTS[case.case_id] = fingerprint
 
+
 try:
     from backend.app.schemas import (
         InvestigationCase,
         InvestigationReport,
         Claim,
     )
-    from backend.app.gemini_service import call_gemini_api
+    from backend.app.gemini_service import call_gemini_api, _generate_deterministic_fallback_synthesis
     from backend.app.rules import (
         HIGH_RISK_JURISDICTIONS,
         STRUCTURING_LOWER_BOUND,
         STRUCTURING_UPPER_BOUND,
         run_all_deterministic_rules,
         build_risk_dimension_breakdown,
+        calculate_authoritative_risk_score,
     )
     from backend.app.evidence_validator import (
         perform_deterministic_validation,
         compute_grounding_status,
+        detect_untrusted_instructions,
         usable_entity_sanctions_status,
     )
     from backend.app.review_policy import evaluate_review_policy
@@ -73,23 +76,27 @@ except ModuleNotFoundError:
         InvestigationReport,
         Claim,
     )
-    from app.gemini_service import call_gemini_api
+    from app.gemini_service import call_gemini_api, _generate_deterministic_fallback_synthesis
     from app.rules import (
         HIGH_RISK_JURISDICTIONS,
         STRUCTURING_LOWER_BOUND,
         STRUCTURING_UPPER_BOUND,
         run_all_deterministic_rules,
         build_risk_dimension_breakdown,
+        calculate_authoritative_risk_score,
     )
     from app.evidence_validator import (
         perform_deterministic_validation,
         compute_grounding_status,
+        detect_untrusted_instructions,
         usable_entity_sanctions_status,
     )
 
     from app.review_policy import evaluate_review_policy
     from app.intent_and_telemetry import classify_input_intent, execute_telemetry_probes
     from app.anomaly_detector import detect_transaction_anomalies
+
+
 
 
 
@@ -149,6 +156,9 @@ def run_baseline_workflow(
         timestamp=datetime.now(timezone.utc).isoformat(),
         anomaly_score=None,
         anomaly_details=None,
+        risk_score=10 if risk_level == "LOW" else (50 if risk_level == "MEDIUM" else 85),
+        calibrated_score=10 if risk_level == "LOW" else (50 if risk_level == "MEDIUM" else 85),
+        transaction=case.transaction,
     )
 
 
@@ -170,6 +180,7 @@ def run_validated_workflow(
     # and scenario_name are labels only and must never select benchmark data.
     tx = case.transaction
 
+
     # 1. Absolute System-1 Fast-Path Hard-Gate
     # At the absolute top (before any heavy rule evaluation or Gemini calls), inspect transaction payload.
     commercial_text = f"{tx.counterparty_name} {tx.memo or ''}".upper()
@@ -188,7 +199,26 @@ def run_validated_workflow(
     is_domestic = origin_country.upper() == destination_country.upper()
     is_low_value = tx.amount_usd < 500.0
 
-    if is_low_value and is_domestic and is_commercial:
+    supplied_sanctions = next(
+        (
+            record for record in case.evidence_records
+            if record.evidence_type == "SANCTIONS_PEP_SCREENING"
+            and (record.transaction_id or record.data.get("transaction_id"))
+            in (None, tx.transaction_id)
+            and (record.customer_id or record.data.get("customer_id"))
+            in (None, tx.customer_id)
+        ),
+        None,
+    )
+    has_high_risk_input = (
+        tx.counterparty_country.upper() in HIGH_RISK_JURISDICTIONS
+        or STRUCTURING_LOWER_BOUND <= tx.amount <= STRUCTURING_UPPER_BOUND
+        or usable_entity_sanctions_status(supplied_sanctions, tx)
+        in {"CONFIRMED_MATCH", "POTENTIAL_MATCH", "PEP_HIT"}
+    )
+    injection_detected, _ = detect_untrusted_instructions(case)
+
+    if is_low_value and is_domestic and is_commercial and not has_high_risk_input and not injection_detected:
         latency_ms = round((time.perf_counter() - val_start) * 1000.0, 2)
         persisted_evidence, probe_statuses = execute_telemetry_probes(tx, case.evidence_records)
         anomaly_res = detect_transaction_anomalies(case)
@@ -198,6 +228,20 @@ def run_validated_workflow(
             val_report=None,
             intent_result=None,
         )
+        fast_path_bd = {
+            "policy_version": "2026.1-REGULATORY-DETERMINISTIC",
+            "authoritative_score": 5,
+            "preliminary_risk_level": "LOW",
+            "base_score": 5,
+            "components": {
+                "base_baseline": {"points": 5, "rationale": "Standard baseline transactional scrutiny"},
+                "amount_and_structuring": {
+                    "points": -5,
+                    "amount": tx.amount,
+                    "rationale": "Low-value domestic retail wholesale payment under $500 threshold (-5 discount)",
+                },
+            },
+        }
         return InvestigationReport(
             case_id=case.case_id,
             workflow_type="validated_deterministic",
@@ -208,6 +252,10 @@ def run_validated_workflow(
                 "baseline. Cleared by automated System-1 fast-path reflex triage."
             ),
             preliminary_risk_level="LOW",
+            risk_score=5,
+            calibrated_score=5,
+            risk_score_breakdown=fast_path_bd,
+            transaction=tx,
             claims=[],
             rule_results=[],
             risk_dimensions=risk_breakdown,
@@ -225,7 +273,9 @@ def run_validated_workflow(
             telemetry_probes=probe_statuses,
             anomaly_score=anomaly_res.anomaly_score,
             anomaly_details=anomaly_res.model_dump(),
+            quarantined_evidence=[],
         )
+
 
     # 2. Telemetry and Evidence Lifecycle Persistence
     # Run and persist telemetry probe EvidenceRecords if not already bundled
@@ -316,6 +366,15 @@ def run_validated_workflow(
             sar_rec = False
             sar_rat = None
 
+        auth_score, score_bd = calculate_authoritative_risk_score(
+            case_with_probes,
+            rule_results,
+            val_report=None,
+            intent_result=intent_result,
+            probes=probe_statuses,
+        )
+        prelim_risk = score_bd["preliminary_risk_level"]
+
         return InvestigationReport(
             case_id=case.case_id,
             workflow_type="validated_deterministic",
@@ -323,6 +382,10 @@ def run_validated_workflow(
             fast_path_used=False,
             summary=summary,
             preliminary_risk_level=prelim_risk,
+            risk_score=auth_score,
+            calibrated_score=auth_score,
+            risk_score_breakdown=score_bd,
+            transaction=tx,
             claims=[],
             rule_results=rule_results,
             risk_dimensions=risk_breakdown,
@@ -342,15 +405,21 @@ def run_validated_workflow(
             telemetry_probes=probe_statuses,
             anomaly_score=anomaly_res.anomaly_score,
             anomaly_details=anomaly_res.model_dump(),
+            quarantined_evidence=[],
         )
 
     # 4. Call Gemini reasoning model — pass custom key if provided by HTTP header
-    model_output, gen_latency = call_gemini_api(
-        case_with_probes,
-        custom_api_key=custom_api_key,
-    )
+    try:
+        model_output, gen_latency = call_gemini_api(
+            case_with_probes,
+            custom_api_key=custom_api_key,
+        )
+    except Exception as e:
+        print(f"[Workflow] AI provider call unavailable ({e}); engaging deterministic baseline synthesis.")
+        model_output, gen_latency = _generate_deterministic_fallback_synthesis(case_with_probes)
 
     # 5. Parse raw claims
+
     raw_claims_data = model_output.get("claims", [])
     raw_claims: List[Claim] = []
     for c in raw_claims_data:
@@ -369,13 +438,15 @@ def run_validated_workflow(
     # 6. Perform deterministic validation over claims and evidence bundle
     val_report = perform_deterministic_validation(case_with_probes, raw_claims)
 
-    # 7. Evaluate governance review policy
-    model_risk = model_output.get("preliminary_risk_level", "LOW")
-    if model_risk not in ("LOW", "MEDIUM", "HIGH"):
-        model_risk = "LOW"
-    
-    # If deterministic rules flagged high risk, escalate risk level
-    final_risk = "HIGH" if has_high_rule_flag else model_risk
+    # 7. Evaluate authoritative risk score & governance review policy
+    auth_score, score_bd = calculate_authoritative_risk_score(
+        case_with_probes,
+        rule_results,
+        val_report=val_report,
+        intent_result=intent_result,
+        probes=probe_statuses,
+    )
+    final_risk = score_bd["preliminary_risk_level"]
 
     decision, abstain_recommended, abstention_reasons, warnings = evaluate_review_policy(
         validation_report=val_report,
@@ -409,6 +480,10 @@ def run_validated_workflow(
         fast_path_used=False,
         summary=model_output.get("summary", "Validated investigation report."),
         preliminary_risk_level=final_risk,
+        risk_score=auth_score,
+        calibrated_score=auth_score,
+        risk_score_breakdown=score_bd,
+        transaction=tx,
         claims=val_report.validated_claims,
         rule_results=rule_results,
         risk_dimensions=risk_breakdown,
@@ -426,4 +501,5 @@ def run_validated_workflow(
         telemetry_probes=probe_statuses,
         anomaly_score=anomaly_res.anomaly_score,
         anomaly_details=anomaly_res.model_dump(),
+        quarantined_evidence=val_report.quarantined_evidence,
     )

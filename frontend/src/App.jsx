@@ -141,10 +141,27 @@ function adaptBackendResponse(data, elapsedMs) {
       status: "verified",
     }));
 
-  // Build quarantined claims from unverified/unsupported/conflicting claims and warnings
+  // Build system findings (deterministic baseline notices, missing mandatory evidence, advisories)
+  const systemFindings = [];
+  if (data.warnings && Array.isArray(data.warnings)) {
+    data.warnings.forEach((w, idx) => {
+      systemFindings.push({
+        id: `SYS-FINDING-${idx + 1}`,
+        type: /missing/i.test(w)
+          ? "MISSING_MANDATORY_EVIDENCE"
+          : /ctr|structuring|large/i.test(w)
+            ? "REGULATORY_RECORDKEEPING"
+            : "DETERMINISTIC_ADVISORY",
+        message: w,
+        severity: /missing|sanction|blocked/i.test(w) ? "WARNING" : "INFO",
+      });
+    });
+  }
+
+  // Build quarantined claims strictly from unverified/unsupported AI assertions and adversarial injection tokens
   const quarantinedClaims = [];
 
-  // 1. Quarantined claims from claims breakdown
+  // 1. Quarantined claims from claims breakdown (unsupported or conflicted AI assertions)
   if (data.claims && Array.isArray(data.claims)) {
     data.claims.forEach((c, idx) => {
       if (c.support_status && c.support_status !== "supported") {
@@ -160,31 +177,16 @@ function adaptBackendResponse(data, elapsedMs) {
     });
   }
 
-  // 2. Quarantined items from abstention reasons
+  // 2. Quarantined items from untrusted prompt injections or adversarial control sequences
   if (data.abstention_reasons && Array.isArray(data.abstention_reasons)) {
     data.abstention_reasons.forEach((r, idx) => {
-      if (/injection|untrusted|adversarial|override|stale|conflict|unsupported/i.test(r)) {
+      if (/injection|untrusted|adversarial|override/i.test(r)) {
         quarantinedClaims.push({
-          id: `QC-REASON-0${idx + 1}`,
-          source_token: "abstention_defect",
+          id: `QC-INJECT-0${idx + 1}`,
+          source_token: "adversarial_injection",
           assertion: r,
           reason:
-            "Policy review boundary triggered — assertion quarantined from evidence dossier.",
-        });
-      }
-    });
-  }
-
-  // 3. Quarantined items from validation warnings
-  if (data.warnings && Array.isArray(data.warnings)) {
-    data.warnings.forEach((w, idx) => {
-      if (/stale|conflict|injection|untrusted|missing/i.test(w)) {
-        quarantinedClaims.push({
-          id: `QC-WARN-0${idx + 1}`,
-          source_token: "evidence_validator_warning",
-          assertion: w,
-          reason:
-            "Deterministic evidence validator detected anomaly or missing baseline proof.",
+            "Adversarial instruction detected — assertion quarantined from evidence dossier by AST gate.",
         });
       }
     });
@@ -193,7 +195,12 @@ function adaptBackendResponse(data, elapsedMs) {
   return {
     workflow_type: data.workflow_type || "validated_deterministic",
     preliminary_risk_level: data.preliminary_risk_level || "MEDIUM",
-    calibrated_score: calibratedScore,
+    calibrated_score: data.risk_score ?? data.calibrated_score ?? calibratedScore,
+    risk_score: data.risk_score ?? data.calibrated_score ?? calibratedScore,
+    risk_score_breakdown: data.risk_score_breakdown || null,
+    transaction: data.transaction || null,
+    case_id: data.case_id || null,
+    system_findings: systemFindings,
     system1_disposition:
       data.preliminary_risk_level === "LOW" ? "PASS" : "DISPATCH_INVESTIGATION",
     system1_model: "Gemini 2.5 Flash",
@@ -310,15 +317,15 @@ function buildInvestigationCase(payload, selectedKey, caseId, sensitivityMode) {
       counterparty_account: payload.counterparty_account || "ACCT-UNKNOWN",
       counterparty_name: payload.counterparty_name || "Unknown Counterparty",
       counterparty_bank: payload.counterparty_bank || "Unknown Institution",
-      counterparty_country: payload.counterparty_country || "US",
-      origin_country: payload.origin_country || "US",
-      destination_country: payload.counterparty_country || "US",
+      counterparty_country: (payload.counterparty_country || payload.destination_country || "US").toUpperCase(),
+      origin_country: (payload.origin_country || "US").toUpperCase(),
+      destination_country: (payload.destination_country || payload.counterparty_country || "US").toUpperCase(),
       ip_address: payload.device_ip || null,
       location: payload.origin_country || null,
       memo: payload.memo || null,
       is_synthetic: true,
     },
-    evidence_records: [],
+    evidence_records: payload.evidence_records || [],
   };
 }
 
