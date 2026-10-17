@@ -289,6 +289,11 @@ export default function HistoryDrawer({
                     Load Dossier <ArrowRight className="w-3 h-3" />
                   </span>
                 </div>
+                {item.error_message && (
+                  <div className="mt-2 rounded border border-rose-900/60 bg-rose-950/30 px-2 py-1.5 text-[10px] leading-snug text-rose-300">
+                    Investigation failed: {item.error_message}
+                  </div>
+                )}
               </div>
             ))
           )}
