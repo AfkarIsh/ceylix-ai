@@ -55,6 +55,7 @@ export default function HistoryDrawer({
   backendUrl,
   localHistory = [],
   dismissedHistoryIds = [],
+  historyResetAt,
   onDismissedHistoryChange,
   onHistoryCountChange,
   onSelectCase,
@@ -84,9 +85,16 @@ export default function HistoryDrawer({
         if (isMounted) {
           setBackendCases(data.cases || []);
           const localIds = new Set(localHistory.map((item) => item.case_id));
+          const resetTimestamp = historyResetAt
+            ? new Date(historyResetAt).getTime()
+            : 0;
+          const visibleBackendCases = (data.cases || []).filter((item) => {
+            const timestamp = new Date(item.timestamp || "").getTime();
+            return Number.isFinite(timestamp) && timestamp > resetTimestamp;
+          });
           const mergedCount =
             localHistory.length +
-            (data.cases || []).filter(
+            visibleBackendCases.filter(
               (item) =>
                 !localIds.has(item.case_id) &&
                 !dismissedHistoryIds.includes(item.case_id)
@@ -107,6 +115,7 @@ export default function HistoryDrawer({
     backendUrl,
     localHistory,
     dismissedHistoryIds,
+    historyResetAt,
     onHistoryCountChange,
   ]);
 
@@ -121,6 +130,8 @@ export default function HistoryDrawer({
     ...backendCases
       .filter(
         (bc) =>
+          Number.isFinite(new Date(bc.timestamp || "").getTime()) &&
+          new Date(bc.timestamp).getTime() > new Date(historyResetAt).getTime() &&
           !localHistory.some((lh) => lh.case_id === bc.case_id) &&
           !dismissedHistoryIds.includes(bc.case_id)
       )

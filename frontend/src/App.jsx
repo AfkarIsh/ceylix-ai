@@ -397,6 +397,16 @@ function AppContent() {
   );
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [historyResetAt] = useState(() => {
+    const existing = localStorage.getItem(STORAGE_KEYS.HISTORY_RESET_AT);
+    if (existing) return existing;
+
+    const resetAt = new Date().toISOString();
+    localStorage.removeItem(STORAGE_KEYS.CASE_HISTORY);
+    localStorage.removeItem(STORAGE_KEYS.DISMISSED_HISTORY);
+    localStorage.setItem(STORAGE_KEYS.HISTORY_RESET_AT, resetAt);
+    return resetAt;
+  });
   const [caseHistory, setCaseHistory] = useState(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.CASE_HISTORY);
@@ -847,6 +857,7 @@ function AppContent() {
         backendUrl={BACKEND_URL}
         localHistory={caseHistory}
         dismissedHistoryIds={dismissedHistoryIds}
+        historyResetAt={historyResetAt}
         onDismissedHistoryChange={setDismissedHistoryIds}
         onHistoryCountChange={setHistoryCount}
         onSelectCase={handleSelectHistoricalCase}

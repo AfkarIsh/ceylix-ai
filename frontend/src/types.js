@@ -97,6 +97,7 @@ export const STORAGE_KEYS = {
   SENSITIVITY_MODE:  "ceylix_sensitivity_mode",
   CASE_HISTORY:      "ceylix_case_history",
   DISMISSED_HISTORY: "ceylix_dismissed_history",
+  HISTORY_RESET_AT:  "ceylix_history_reset_at",
   MODEL_PREFERENCE:  "ceylix_model_preference",
 };
 
