@@ -327,6 +327,11 @@ FIRESTORE_COLLECTION=cases
 
 Add Firebase and deployment configuration only where needed. Use the current official SDK and deployment documentation when configuring credentials. The frontend must never receive a privileged server-side API key.
 
+For local Firebase web configuration, copy `frontend/.env.example` to
+`frontend/.env.local` and provide the `VITE_FIREBASE_*` values from the Firebase
+console. The repository intentionally contains no project-specific Firebase
+values; do not add them to source files or commit local environment files.
+
 ## 12. Security and Reliability Requirements
 
 - Validate and constrain incoming request sizes and data types.
