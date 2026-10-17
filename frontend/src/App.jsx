@@ -2,7 +2,9 @@
  * App.jsx — Ceylix AI Incident Workbench Orchestrator
  * ────────────────────────────────────────────────────────────────
  * Comprehensive state orchestrator:
- *   - 3-tier backend fetch strategy (Live Gemini → Simulate → Local Mock)
+ *   - Demo Mode vs Live API Mode toggle (persisted to localStorage)
+ *   - Live FastAPI backend enforcement — visible error banner on failure
+ *   - 5-second health check polling for dynamic header status badge
  *   - Custom Gemini API key injection (X-Custom-Gemini-Key header)
  *   - Risk Sensitivity Mode controls (Standard vs Strict Compliance)
  *   - Incident History Drawer with persistent session & repository runs
@@ -11,7 +13,7 @@
  */
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import Header from "./components/Header.jsx";
-import TelemetryPanel from "./components/TelemetryPanel.jsx";
+import TelemetryPanel, { GeminiHeroView } from "./components/TelemetryPanel.jsx";
 import AgentStepperPanel from "./components/AgentStepperPanel.jsx";
 import DossierPanel from "./components/DossierPanel.jsx";
 import SettingsModal from "./components/SettingsModal.jsx";
@@ -35,6 +37,9 @@ const BACKEND_URL =
   "http://127.0.0.1:8000";
 
 const DEFAULT_SCENARIO_KEY = "scenarioB"; // High-risk demo on initial load
+const HEALTH_POLL_INTERVAL_MS = 5000;
+const ERROR_BANNER_DISMISS_MS = 6000;
+const DEMO_MODE_SIMULATED_DELAY_MS = 400;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Backend response → UI result adapter
@@ -172,31 +177,56 @@ function buildInvestigationCase(payload, selectedKey, caseId, sensitivityMode) {
     category: categoryMap[selectedKey] || "complete_consistent",
     scenario_name:
       PRESET_SCENARIOS[selectedKey]?.name || "Manual Triage Payload",
-    description: `Analyst forensic triage for transaction ${payload.transaction_id} [Mode: ${sensitivityMode}]`,
+    // sensitivity_mode is NOT in InvestigationCase schema — encode in description only
+    description: `Analyst forensic triage for transaction ${payload.transaction_id} [Sensitivity: ${sensitivityMode}]`,
     is_synthetic: true,
     synthetic_disclaimer:
       "SYNTHETIC BENCHMARK CASE - NOT REAL FINANCIAL RECORDS",
     created_at: new Date().toISOString(),
-    sensitivity_mode: sensitivityMode,
     transaction: {
-      transaction_id: payload.transaction_id,
-      timestamp: payload.timestamp,
-      account_id: payload.account_id,
-      customer_id: payload.customer_id || "CUST-LIVE-01",
-      amount: parseFloat(payload.amount) || 0,
-      currency: payload.currency || "USD",
-      channel: payload.channel || "WIRE",
-      counterparty_account: payload.counterparty_account,
-      counterparty_name: payload.counterparty_name,
-      counterparty_bank: payload.counterparty_bank,
-      counterparty_country: payload.counterparty_country,
-      ip_address: payload.device_ip || null,
-      location: payload.origin_country || null,
-      memo: payload.memo || null,
-      is_synthetic: true,
+      transaction_id:      payload.transaction_id,
+      timestamp:           payload.timestamp,
+      account_id:          payload.account_id,
+      customer_id:         payload.customer_id         || "CUST-LIVE-01",
+      amount:              parseFloat(payload.amount)  || 0,
+      currency:            payload.currency            || "USD",
+      channel:             payload.channel             || "WIRE",
+      counterparty_account: payload.counterparty_account || "ACCT-UNKNOWN",
+      counterparty_name:   payload.counterparty_name   || "Unknown Counterparty",
+      counterparty_bank:   payload.counterparty_bank   || "Unknown Institution",
+      counterparty_country: payload.counterparty_country || "US",
+      origin_country:      payload.origin_country || "US",
+      destination_country: payload.counterparty_country || "US",
+      ip_address:          payload.device_ip           || null,
+      location:            payload.origin_country       || null,
+      memo:                payload.memo                || null,
+      is_synthetic:        true,
     },
     evidence_records: [],
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Error Banner Component
+// ─────────────────────────────────────────────────────────────────────────────
+function ErrorBanner({ message, onDismiss }) {
+  if (!message) return null;
+  return (
+    <div
+      role="alert"
+      className="fixed top-4 left-1/2 -translate-x-1/2 z-50 max-w-[700px] w-[calc(100%-2rem)] flex items-start gap-3 bg-rose-950/95 border border-rose-500/70 text-rose-200 text-sm font-mono px-5 py-3.5 rounded-xl shadow-2xl shadow-rose-950/80 backdrop-blur-md"
+    >
+      <span className="text-rose-400 text-base mt-0.5 flex-shrink-0">⚠</span>
+      <span className="flex-1 leading-relaxed">{message}</span>
+      <button
+        onClick={onDismiss}
+        className="ml-2 text-rose-400 hover:text-rose-200 transition-colors flex-shrink-0 text-lg leading-none"
+        aria-label="Dismiss error"
+      >
+        ×
+      </button>
+    </div>
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -221,6 +251,56 @@ export default function App() {
   const [firestoreSyncState, setFirestoreSyncState] = useState(SYNC_STATE.IDLE);
   const [firestoreSyncTs, setFirestoreSyncTs] = useState(null);
 
+  // ── Error Banner ─────────────────────────────────────────────────────────
+  const [errorBanner, setErrorBanner] = useState(null);
+  const errorBannerTimerRef = useRef(null);
+
+  const showErrorBanner = useCallback((msg) => {
+    setErrorBanner(msg);
+    clearTimeout(errorBannerTimerRef.current);
+    errorBannerTimerRef.current = setTimeout(
+      () => setErrorBanner(null),
+      ERROR_BANNER_DISMISS_MS
+    );
+  }, []);
+
+  const dismissErrorBanner = useCallback(() => {
+    clearTimeout(errorBannerTimerRef.current);
+    setErrorBanner(null);
+  }, []);
+
+  // ── Demo / Live Mode ─────────────────────────────────────────────────────
+  const [isDemoMode, setIsDemoMode] = useState(() => {
+    const stored = localStorage.getItem(STORAGE_KEYS.DEMO_MODE);
+    return stored === null ? false : stored === "true";
+  });
+
+  // ── Gemini Cognitive Model Tier & Hero Mode ─────────────────────────────
+  const [selectedModel, setSelectedModel] = useState("gemini-2.5-flash");
+  const [hasStartedInvestigation, setHasStartedInvestigation] = useState(false);
+
+  // Track mount so the auto-triage useEffect doesn't fire on initial render
+  const hasToggledRef = useRef(false);
+
+  const handleResetWorkspace = useCallback(() => {
+    setHasStartedInvestigation(false);
+    setInvestigationResult(null);
+    setIsEditingPayload(false);
+    setFirestoreSyncState(SYNC_STATE.IDLE);
+    setFirestoreSyncTs(null);
+  }, []);
+
+  const handleToggleDemoMode = useCallback(() => {
+    // Always clear any stale error banners when the user manually switches mode
+    dismissErrorBanner();
+    setIsDemoMode((prev) => {
+      const next = !prev;
+      localStorage.setItem(STORAGE_KEYS.DEMO_MODE, String(next));
+      hasToggledRef.current = true; // mark that user has explicitly toggled
+      return next;
+    });
+  }, [dismissErrorBanner]);
+
   // ── Enterprise Settings & Controls State ─────────────────────────────────
   const [customApiKey, setCustomApiKey] = useState(
     () => localStorage.getItem(STORAGE_KEYS.CUSTOM_GEMINI_KEY) || ""
@@ -241,14 +321,39 @@ export default function App() {
 
   const abortRef = useRef(null);
 
-  // ── Health check on mount ────────────────────────────────────────────────
+  // ── Auto-triage on switch to Live Mode ───────────────────────────────────
+  // When the user explicitly toggles FROM Demo TO Live, immediately fire a
+  // live triage so they see real results right away instead of stale demo data.
+  // We skip the initial mount by checking hasToggledRef.
   useEffect(() => {
-    const controller = new AbortController();
-    fetch(`${BACKEND_URL}${API.HEALTH}`, { signal: controller.signal })
-      .then((res) => res.json())
-      .then(() => setBackendStatus(BACKEND_STATUS.CONNECTED))
-      .catch(() => setBackendStatus(BACKEND_STATUS.OFFLINE_FALLBACK));
-    return () => controller.abort();
+    if (!hasToggledRef.current) return; // skip mount
+    if (!isDemoMode && !isInvestigating) {
+      handleRunTriage();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDemoMode]);
+
+  // ── Health check — 5-second polling interval ─────────────────────────────
+  useEffect(() => {
+    let intervalId = null;
+    let isMounted = true;
+
+    const checkHealth = () => {
+      fetch(`${BACKEND_URL}${API.HEALTH}`, {
+        signal: AbortSignal.timeout(4000),
+      })
+        .then((res) => res.json())
+        .then(() => { if (isMounted) setBackendStatus(BACKEND_STATUS.CONNECTED); })
+        .catch(() => { if (isMounted) setBackendStatus(BACKEND_STATUS.OFFLINE_FALLBACK); });
+    };
+
+    checkHealth();
+    intervalId = setInterval(checkHealth, HEALTH_POLL_INTERVAL_MS);
+
+    return () => {
+      isMounted = false;
+      clearInterval(intervalId);
+    };
   }, []);
 
   // ── Save Custom Gemini Key ───────────────────────────────────────────────
@@ -279,6 +384,7 @@ export default function App() {
     setIsEditingPayload(false);
     setFirestoreSyncState(SYNC_STATE.IDLE);
     setFirestoreSyncTs(null);
+    setHasStartedInvestigation(true);
   }, []);
 
   // ── Payload field change ─────────────────────────────────────────────────
@@ -287,68 +393,143 @@ export default function App() {
   }, []);
 
   // ── Run Forensic Triage ──────────────────────────────────────────────────
-  const handleRunTriage = useCallback(async () => {
+  const handleRunTriage = useCallback(async (overridePayload = null) => {
     if (isInvestigating) return;
     setIsInvestigating(true);
+    setHasStartedInvestigation(true);
     setFirestoreSyncState(SYNC_STATE.IDLE);
     setFirestoreSyncTs(null);
+    dismissErrorBanner();
 
-    // abort any previous in-flight request
+    // Abort any previous in-flight request
     if (abortRef.current) abortRef.current.abort();
     abortRef.current = new AbortController();
     const signal = abortRef.current.signal;
 
     const startTime = performance.now();
-    const investigationCase = buildInvestigationCase(
-      activePayload,
-      selectedScenarioKey,
-      activeCaseId,
-      sensitivityMode
-    );
-
-    const requestHeaders = {
-      "Content-Type": "application/json",
-      ...(customApiKey ? { "X-Custom-Gemini-Key": customApiKey } : {}),
-    };
-
-    const attemptFetch = async (url) => {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: requestHeaders,
-        body: JSON.stringify(investigationCase),
-        signal,
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return res.json();
-    };
-
     let finalResult = null;
 
-    try {
-      let data = null;
-      let usedRoute = null;
+    const payloadToUse = overridePayload || activePayload;
+    const caseIdToUse = overridePayload?.transaction_id
+      ? `CASE-${overridePayload.transaction_id.replace(/^TX-/, '')}`
+      : activeCaseId;
 
-      // Attempt 1: Live Gemini
+    if (overridePayload) {
+      setActivePayload({ ...overridePayload });
+      setActiveCaseId(caseIdToUse);
+    }
+
+    try {
+      // ── DEMO MODE PATH ───────────────────────────────────────────────────
+      if (isDemoMode) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, DEMO_MODE_SIMULATED_DELAY_MS)
+        );
+        if (signal.aborted) return;
+        const isHighRisk =
+          payloadToUse.amount >= 10000 ||
+          payloadToUse.counterparty_country === "IR" ||
+          payloadToUse.counterparty_country === "KP";
+
+        const mockResult = overridePayload
+          ? {
+              workflow_type: "validated_deterministic",
+              preliminary_risk_level: isHighRisk ? "HIGH" : "LOW",
+              calibrated_score: isHighRisk ? 94 : 12,
+              system1_disposition: isHighRisk ? "DISPATCH_INVESTIGATION" : "PASS",
+              system1_model: "Gemini 2.5 Flash",
+              system2_model: isHighRisk
+                ? "Gemini 2.5 Pro (Deep Grounding)"
+                : "Bypassed (Instant Clear)",
+              grounding_status: "FULLY_GROUNDED",
+              latency_ms: 185,
+              decision: isHighRisk
+                ? "ABSTAIN_FOR_HUMAN_REVIEW"
+                : "RELEASE_WITH_PROVENANCE",
+              disposition_title: isHighRisk
+                ? "ESCALATE_FOR_ANALYST_REVIEW"
+                : "DISMISS_FALSE_POSITIVE",
+              summary: `Forensic investigation of wire ${payloadToUse.transaction_id} ($${payloadToUse.amount} ${payloadToUse.currency}) to ${payloadToUse.counterparty_name} in ${payloadToUse.counterparty_country}.`,
+              claims: [],
+              quarantined_claims: [],
+              probes: {
+                ofac_sdn: {
+                  status:
+                    payloadToUse.counterparty_country === "IR" ||
+                    payloadToUse.counterparty_country === "KP"
+                      ? "MATCHED"
+                      : "CLEAR",
+                  detail:
+                    payloadToUse.counterparty_country === "IR" ||
+                    payloadToUse.counterparty_country === "KP"
+                      ? "Sanctions hit detected by rule engine"
+                      : "0 hits against OFAC SDN & Consolidated List",
+                  verified: true,
+                },
+                ip_geo: {
+                  status: "CLEAR",
+                  detail: "IP geolocation resolved via backend rule engine",
+                  verified: true,
+                },
+                core_kyc: {
+                  status: "CLEAR",
+                  detail: "Customer KYC profile within normal parameters",
+                  verified: true,
+                },
+              },
+            }
+          : { ...PRESET_SCENARIOS[selectedScenarioKey].mockResult };
+
+        const elapsed = Math.round(performance.now() - startTime);
+        setLastExecutionTime(`${elapsed.toLocaleString()} ms (demo)`);
+        setInvestigationResult(mockResult);
+        finalResult = mockResult;
+        return; // history append handled in finally
+      }
+
+      // ── LIVE MODE PATH ───────────────────────────────────────────────────
+      const investigationCase = buildInvestigationCase(
+        payloadToUse,
+        selectedScenarioKey,
+        caseIdToUse,
+        sensitivityMode
+      );
+
+      const requestHeaders = {
+        "Content-Type": "application/json",
+        ...(customApiKey ? { "X-Custom-Gemini-Key": customApiKey } : {}),
+      };
+
+      const attemptFetch = async (url) => {
+        const res = await fetch(url, {
+          method: "POST",
+          headers: requestHeaders,
+          body: JSON.stringify(investigationCase),
+          signal,
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+        return res.json();
+      };
+
+      let data = null;
+
+      // Attempt 1: Live Gemini endpoint
       if (backendStatus === BACKEND_STATUS.CONNECTED) {
         try {
           data = await attemptFetch(`${BACKEND_URL}${API.INVESTIGATE_LIVE}`);
-          usedRoute = "live";
           setBackendStatus(BACKEND_STATUS.CONNECTED);
         } catch (liveErr) {
           if (signal.aborted) throw liveErr;
-          console.warn("[Ceylix] Live Gemini call failed, trying simulate=true:", liveErr.message);
-          // Attempt 2: Simulate mode
+          console.warn(
+            "[Ceylix] Live Gemini call failed, trying simulate=true:",
+            liveErr.message
+          );
+          // Attempt 2: Backend deterministic simulation
           data = await attemptFetch(`${BACKEND_URL}${API.INVESTIGATE_SIM}`);
-          usedRoute = "simulated";
         }
       } else {
-        // Attempt 2 directly if offline
-        try {
-          data = await attemptFetch(`${BACKEND_URL}${API.INVESTIGATE_SIM}`);
-          usedRoute = "simulated";
-        } catch {
-          throw new Error("Backend offline");
-        }
+        // Backend known offline — try simulate route directly
+        data = await attemptFetch(`${BACKEND_URL}${API.INVESTIGATE_SIM}`);
       }
 
       const elapsed = Math.round(performance.now() - startTime);
@@ -357,17 +538,31 @@ export default function App() {
       const adapted = adaptBackendResponse(data, elapsed, selectedScenarioKey);
       setInvestigationResult(adapted);
       finalResult = adapted;
+
     } catch (err) {
       if (signal.aborted) return;
-      console.warn("[Ceylix] All backend routes failed, using deterministic local mock:", err.message);
+
+      // ── LIVE MODE FAILURE — surface error banner, auto-switch to Demo Mode
+      console.error("[Ceylix] Backend unreachable — network error details:", err);
       setBackendStatus(BACKEND_STATUS.OFFLINE_FALLBACK);
+
+      showErrorBanner(
+        "[ERROR: Live Backend Unreachable. Please start Uvicorn server on port 8000] " +
+          `— Switching to Demo Mode automatically. (${err.message})`
+      );
+
+      // Graceful degradation: auto-enable Demo Mode with clear user-visible warning
+      setIsDemoMode(true);
+      localStorage.setItem(STORAGE_KEYS.DEMO_MODE, "true");
+
       const elapsed = Math.round(performance.now() - startTime);
       const mockLatency =
         PRESET_SCENARIOS[selectedScenarioKey]?.mockResult?.latency_ms || 1800;
-      setLastExecutionTime(`${(elapsed + mockLatency).toLocaleString()} ms`);
+      setLastExecutionTime(`${(elapsed + mockLatency).toLocaleString()} ms (auto-demo)`);
       const fallback = { ...PRESET_SCENARIOS[selectedScenarioKey].mockResult };
       setInvestigationResult(fallback);
       finalResult = fallback;
+
     } finally {
       setIsInvestigating(false);
 
@@ -411,6 +606,9 @@ export default function App() {
     backendStatus,
     customApiKey,
     isInvestigating,
+    isDemoMode,
+    dismissErrorBanner,
+    showErrorBanner,
   ]);
 
   // ── Select Historical Case from Drawer ───────────────────────────────────
@@ -435,6 +633,7 @@ export default function App() {
     setIsEditingPayload(false);
     setFirestoreSyncState(SYNC_STATE.IDLE);
     setFirestoreSyncTs(null);
+    setHasStartedInvestigation(true);
   }, []);
 
   // ── Clear Local Session History ──────────────────────────────────────────
@@ -523,6 +722,9 @@ export default function App() {
   // ── Render ───────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
+      {/* Error Banner — fixed rose toast when live backend is unreachable */}
+      <ErrorBanner message={errorBanner} onDismiss={dismissErrorBanner} />
+
       {/* Sticky Header with Controls */}
       <Header
         backendStatus={backendStatus}
@@ -534,44 +736,66 @@ export default function App() {
         onOpenHistory={() => setIsHistoryOpen(true)}
         customApiKey={customApiKey}
         historyCount={caseHistory.length}
+        isDemoMode={isDemoMode}
+        onToggleDemoMode={handleToggleDemoMode}
+        onResetWorkspace={handleResetWorkspace}
       />
 
-      {/* 3-Panel Compliance Workbench */}
-      <main className="flex-1 max-w-[1400px] w-full mx-auto p-5">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-          {/* Panel 1: Telemetry & Sensitivity */}
-          <TelemetryPanel
-            payload={activePayload}
-            isEditing={isEditingPayload}
-            isInvestigating={isInvestigating}
-            backendStatus={backendStatus}
-            sensitivityMode={sensitivityMode}
-            onChangeSensitivityMode={handleChangeSensitivityMode}
-            onEditToggle={() => setIsEditingPayload((v) => !v)}
-            onPayloadChange={handlePayloadChange}
+      {/* Main Area: Gemini Hero Landing vs 3-Panel Compliance Workbench */}
+      <main className="flex-1 max-w-[1400px] w-full mx-auto p-4 sm:p-5">
+        {!hasStartedInvestigation ? (
+          <GeminiHeroView
             onRunTriage={handleRunTriage}
-          />
-
-          {/* Panel 2: Agent Stepper & Grounding Gauge */}
-          <AgentStepperPanel
-            result={investigationResult}
-            lastExecutionTime={lastExecutionTime}
             isInvestigating={isInvestigating}
-            backendStatus={backendStatus}
-          />
-
-          {/* Panel 3: Evidence Dossier & Quarantine */}
-          <DossierPanel
-            result={investigationResult}
-            caseId={activeCaseId}
+            selectedModel={selectedModel}
+            onChangeModel={setSelectedModel}
+            onSelectScenario={handleSelectScenario}
+            scenarios={PRESET_SCENARIOS}
             payload={activePayload}
-            backendStatus={backendStatus}
-            firestoreSyncState={firestoreSyncState}
-            firestoreSyncTs={firestoreSyncTs}
-            onFirestoreSync={handleFirestoreSync}
-            onExportAudit={handleExportAudit}
           />
-        </div>
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+            {/* Panel 1: Universal Telemetry Ingestion & Sensitivity */}
+            <TelemetryPanel
+              payload={activePayload}
+              isEditing={isEditingPayload}
+              isInvestigating={isInvestigating}
+              backendStatus={backendStatus}
+              sensitivityMode={sensitivityMode}
+              onChangeSensitivityMode={handleChangeSensitivityMode}
+              onEditToggle={() => setIsEditingPayload((v) => !v)}
+              onPayloadChange={handlePayloadChange}
+              onRunTriage={handleRunTriage}
+              isDemoMode={isDemoMode}
+              onToggleDemoMode={handleToggleDemoMode}
+              selectedModel={selectedModel}
+              onChangeModel={setSelectedModel}
+              onSelectScenario={handleSelectScenario}
+              scenarios={PRESET_SCENARIOS}
+              onResetWorkspace={handleResetWorkspace}
+            />
+
+            {/* Panel 2: Agent Stepper & Grounding Gauge */}
+            <AgentStepperPanel
+              result={investigationResult}
+              lastExecutionTime={lastExecutionTime}
+              isInvestigating={isInvestigating}
+              backendStatus={backendStatus}
+            />
+
+            {/* Panel 3: Evidence Dossier & Quarantine */}
+            <DossierPanel
+              result={investigationResult}
+              caseId={activeCaseId}
+              payload={activePayload}
+              backendStatus={backendStatus}
+              firestoreSyncState={firestoreSyncState}
+              firestoreSyncTs={firestoreSyncTs}
+              onFirestoreSync={handleFirestoreSync}
+              onExportAudit={handleExportAudit}
+            />
+          </div>
+        )}
       </main>
 
       {/* Slide-over Case History Drawer */}
@@ -593,18 +817,32 @@ export default function App() {
         onSaveCustomKey={handleSaveCustomKey}
       />
 
-      {/* Footer */}
+      {/* Footer — persistent mode indicator */}
       <footer className="border-t border-slate-800/80 bg-slate-950 px-6 py-3 text-center text-[11px] text-slate-600">
         <div className="max-w-[1400px] mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
           <div className="font-mono">
             Ceylix AI Incident Workbench · Evidence-Grounded BFSI Risk Investigation
           </div>
-          <div className="flex items-center gap-4 text-slate-700 font-mono text-[10px]">
-            <span>Vertex AI · Gemini 2.5 Flash / Pro</span>
-            <span>·</span>
-            <span>Deterministic AST Claim Validation</span>
-            <span>·</span>
-            <span>Google Cloud Run</span>
+          <div className="flex items-center gap-4 font-mono text-[10px]">
+            <span className="flex items-center gap-1.5">
+              {isDemoMode ? (
+                <>
+                  <span className="text-amber-400 font-semibold">⚡ Demo Mode Active</span>
+                  <span className="text-slate-600">(Instant Simulation)</span>
+                </>
+              ) : (
+                <>
+                  <span className="text-emerald-400 font-semibold">🟢 Live API Connected</span>
+                  <span className="text-slate-600">(FastAPI + Gemini)</span>
+                </>
+              )}
+            </span>
+            <span className="text-slate-700">·</span>
+            <span className="text-slate-700">Vertex AI · Gemini 2.5 Flash / Pro</span>
+            <span className="text-slate-700">·</span>
+            <span className="text-slate-700">Deterministic AST Claim Validation</span>
+            <span className="text-slate-700">·</span>
+            <span className="text-slate-700">Google Cloud Run</span>
           </div>
         </div>
       </footer>

@@ -19,6 +19,9 @@ import {
   Settings,
   History,
   Key,
+  Presentation,
+  Zap,
+  Plus,
 } from "lucide-react";
 import { BACKEND_STATUS } from "../types.js";
 
@@ -111,6 +114,9 @@ export default function Header({
   onOpenHistory,
   customApiKey,
   historyCount = 0,
+  isDemoMode = false,
+  onToggleDemoMode,
+  onResetWorkspace,
 }) {
   return (
     <header className="border-b border-slate-800/80 bg-slate-900/70 backdrop-blur-md sticky top-0 z-40 px-6 py-3.5">
@@ -138,6 +144,33 @@ export default function Header({
 
         {/* ── Actions ───────────────────────────────────────────────── */}
         <div className="flex items-center gap-2.5 flex-shrink-0">
+          {/* Demo / Live Mode Toggle */}
+          <button
+            onClick={onToggleDemoMode}
+            title={isDemoMode ? "Click to switch to Live API Mode" : "Click to switch to Demo Mode"}
+            className={`relative inline-flex items-center gap-2 text-xs font-bold px-3.5 py-1.5 rounded-lg border transition-all duration-200 shadow-md ${
+              isDemoMode
+                ? "bg-amber-950/80 border-amber-500/60 text-amber-300 hover:bg-amber-900/80 hover:border-amber-400 shadow-amber-950/60"
+                : "bg-emerald-950/80 border-emerald-500/60 text-emerald-300 hover:bg-emerald-900/80 hover:border-emerald-400 shadow-emerald-950/60"
+            }`}
+          >
+            {isDemoMode ? (
+              <Zap className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
+            ) : (
+              <Wifi className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+            )}
+            <span className="tracking-wide">
+              {isDemoMode ? "⚡ DEMO MODE (MOCK)" : "🟢 LIVE API MODE"}
+            </span>
+            <span
+              className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                isDemoMode
+                  ? "bg-amber-400 animate-pulse"
+                  : "bg-emerald-400 animate-pulse"
+              }`}
+            />
+          </button>
+
           {/* History Drawer Trigger */}
           <button
             onClick={onOpenHistory}
@@ -151,6 +184,17 @@ export default function Header({
                 {historyCount}
               </span>
             )}
+          </button>
+
+          {/* New Investigation Reset */}
+          <button
+            onClick={onResetWorkspace}
+            className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border border-cyan-500/50 bg-cyan-950/50 hover:bg-cyan-900/70 hover:border-cyan-400 text-cyan-200 transition-all shadow-sm focus:outline-none focus:ring-2 focus:ring-cyan-400/60 focus:ring-offset-2 focus:ring-offset-slate-900"
+            title="Start a new investigation"
+            aria-label="Start a new investigation"
+          >
+            <Plus className="w-3.5 h-3.5 text-cyan-300" />
+            <span>New Investigation</span>
           </button>
 
           {/* Settings Modal Trigger */}
@@ -179,26 +223,6 @@ export default function Header({
             <span className="hidden sm:inline">Export Audit</span>
           </button>
         </div>
-      </div>
-
-      {/* ── Quick Scenario Selector Bar ──────────────────────────────── */}
-      <div className="max-w-[1400px] mx-auto mt-3.5 pt-3 border-t border-slate-800/60 flex flex-wrap items-center gap-2.5">
-        <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mr-1 flex items-center gap-1.5 flex-shrink-0">
-          <Radio className="w-3.5 h-3.5 text-cyan-400" />
-          Quick Demos:
-        </span>
-        {Object.entries(scenarios).map(([key, scn]) => (
-          <ScenarioButton
-            key={key}
-            scnKey={key}
-            scn={scn}
-            isSelected={selectedScenarioKey === key}
-            onClick={onSelectScenario}
-          />
-        ))}
-        <span className="ml-auto text-[10px] font-mono text-slate-500 hidden lg:block">
-          Tier-1 BFSI Compliance Engine · ISO 42001 Audited
-        </span>
       </div>
     </header>
   );
