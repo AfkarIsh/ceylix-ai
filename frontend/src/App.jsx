@@ -406,6 +406,13 @@ function AppContent() {
     }
 
   });
+  const [historyCount, setHistoryCount] = useState(() => caseHistory.length);
+
+  useEffect(() => {
+    setHistoryCount((currentCount) =>
+      currentCount < caseHistory.length ? caseHistory.length : currentCount
+    );
+  }, [caseHistory.length]);
 
   const abortRef = useRef(null);
 
@@ -591,7 +598,7 @@ function AppContent() {
           const updated = [
             historyItem,
             ...prev.filter((p) => p.case_id !== caseIdToUse),
-          ].slice(0, 30);
+          ];
           try {
             localStorage.setItem(STORAGE_KEYS.CASE_HISTORY, JSON.stringify(updated));
           } catch {
@@ -659,6 +666,7 @@ function AppContent() {
   // ── Clear Local Session History ──────────────────────────────────────────
   const handleClearLocalHistory = useCallback(() => {
     setCaseHistory([]);
+    setHistoryCount(0);
     localStorage.removeItem(STORAGE_KEYS.CASE_HISTORY);
   }, []);
 
@@ -755,7 +763,7 @@ function AppContent() {
         onOpenSettings={() => setIsSettingsOpen(true)}
         onOpenHistory={() => setIsHistoryOpen(true)}
         customApiKey={customApiKey}
-        historyCount={caseHistory.length}
+        historyCount={historyCount}
         onResetWorkspace={handleResetWorkspace}
       />
 
@@ -823,6 +831,7 @@ function AppContent() {
         onClose={() => setIsHistoryOpen(false)}
         backendUrl={BACKEND_URL}
         localHistory={caseHistory}
+        onHistoryCountChange={setHistoryCount}
         onSelectCase={handleSelectHistoricalCase}
         onClearLocalHistory={handleClearLocalHistory}
       />

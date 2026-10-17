@@ -23,11 +23,38 @@ import {
 } from "lucide-react";
 import { DISPOSITION, classifyScenario } from "../types.js";
 
+const TIME_GROUPS = [
+  { key: "recent", label: "Today / Recent" },
+  { key: "month", label: "Previous 30 Days" },
+  { key: "past", label: "Earlier / Past Year" },
+];
+
+function getTimeGroup(timestamp) {
+  const parsed = timestamp ? new Date(timestamp).getTime() : Number.NaN;
+  if (Number.isNaN(parsed)) return "past";
+
+  const ageMs = Math.max(0, Date.now() - parsed);
+  if (ageMs <= 24 * 60 * 60 * 1000) return "recent";
+  if (ageMs <= 30 * 24 * 60 * 60 * 1000) return "month";
+  return "past";
+}
+
+function formatTimestamp(timestamp) {
+  if (!timestamp) return "Timestamp unavailable";
+  const parsed = new Date(timestamp);
+  if (Number.isNaN(parsed.getTime())) return "Timestamp unavailable";
+  return parsed.toLocaleString([], {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+}
+
 export default function HistoryDrawer({
   isOpen,
   onClose,
   backendUrl,
   localHistory = [],
+  onHistoryCountChange,
   onSelectCase,
   onClearLocalHistory,
 }) {
@@ -54,6 +81,11 @@ export default function HistoryDrawer({
       .then((data) => {
         if (isMounted) {
           setBackendCases(data.cases || []);
+          const localIds = new Set(localHistory.map((item) => item.case_id));
+          const mergedCount =
+            localHistory.length +
+            (data.cases || []).filter((item) => !localIds.has(item.case_id)).length;
+          onHistoryCountChange?.(mergedCount);
           setLoadingBackend(false);
         }
       })
@@ -64,7 +96,7 @@ export default function HistoryDrawer({
     return () => {
       isMounted = false;
     };
-  }, [isOpen, backendUrl]);
+  }, [isOpen, backendUrl, localHistory, onHistoryCountChange]);
 
   if (!isOpen) return null;
 
@@ -130,6 +162,17 @@ export default function HistoryDrawer({
 
     return true;
   });
+
+  const groupedCases = TIME_GROUPS.map((group) => ({
+    ...group,
+    cases: filteredCases
+      .filter((item) => getTimeGroup(item.timestamp) === group.key)
+      .sort((a, b) => {
+        const first = new Date(a.timestamp || 0).getTime();
+        const second = new Date(b.timestamp || 0).getTime();
+        return (Number.isNaN(second) ? 0 : second) - (Number.isNaN(first) ? 0 : first);
+      }),
+  })).filter((group) => group.cases.length > 0);
 
   const getDispositionBadge = (disp) => {
     switch (disp) {
@@ -252,15 +295,26 @@ export default function HistoryDrawer({
               No matching investigation cases found.
             </div>
           ) : (
-            filteredCases.map((item, idx) => (
-              <div
-                key={`${item.case_id}-${idx}`}
-                onClick={() => {
-                  onSelectCase(item);
-                  onClose();
-                }}
-                className="pt-3 first:pt-0 group p-3 rounded-xl border border-transparent hover:border-slate-800 hover:bg-slate-900/60 transition-all cursor-pointer"
-              >
+            groupedCases.map((group) => (
+              <section key={group.key} className="space-y-2">
+                <div className="sticky top-0 z-10 flex items-center gap-2 bg-slate-950/95 py-1.5 backdrop-blur-sm">
+                  <span className="text-[10px] font-semibold uppercase tracking-widest text-indigo-300">
+                    {group.label}
+                  </span>
+                  <span className="rounded-full border border-slate-800 bg-slate-900 px-1.5 py-0.5 text-[10px] font-mono text-slate-500">
+                    {group.cases.length}
+                  </span>
+                  <div className="h-px flex-1 bg-slate-800/70" />
+                </div>
+                {group.cases.map((item, idx) => (
+                  <div
+                    key={`${group.key}-${item.case_id}-${idx}`}
+                    onClick={() => {
+                      onSelectCase(item);
+                      onClose();
+                    }}
+                    className="group p-3 rounded-xl border border-transparent hover:border-slate-800 hover:bg-slate-900/60 transition-all cursor-pointer"
+                  >
                 <div className="flex items-start justify-between gap-2">
                   <div className="space-y-1">
                     <div className="flex items-center gap-2">
@@ -289,12 +343,17 @@ export default function HistoryDrawer({
                     Load Dossier <ArrowRight className="w-3 h-3" />
                   </span>
                 </div>
+                <div className="mt-1 text-right text-[10px] text-slate-600 font-mono">
+                  {formatTimestamp(item.timestamp)}
+                </div>
                 {item.error_message && (
                   <div className="mt-2 rounded border border-rose-900/60 bg-rose-950/30 px-2 py-1.5 text-[10px] leading-snug text-rose-300">
                     Investigation failed: {item.error_message}
                   </div>
                 )}
-              </div>
+                  </div>
+                ))}
+              </section>
             ))
           )}
         </div>
