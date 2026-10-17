@@ -54,130 +54,37 @@ export default function HistoryDrawer({
   onClose,
   backendUrl,
   localHistory = [],
-  dismissedHistoryIds = [],
-  historyResetAt,
-  onDismissedHistoryChange,
-  onHistoryCountChange,
   onSelectCase,
   onClearLocalHistory,
 }) {
-  const [backendCases, setBackendCases] = useState([]);
-  const [loadingBackend, setLoadingBackend] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [filterDisposition, setFilterDisposition] = useState("ALL");
 
-  // Fetch benchmark repository cases on open
-  useEffect(() => {
-    if (!isOpen) return;
-
-    let isMounted = true;
-    setLoadingBackend(true);
-
-    fetch(`${backendUrl}/api/v1/cases`)
-      .then((res) => {
-        if (!res.ok) throw new Error("Fallback to /api/cases");
-        return res.json();
-      })
-      .catch(() =>
-        fetch(`${backendUrl}/api/cases`).then((r) => (r.ok ? r.json() : { cases: [] }))
-      )
-      .then((data) => {
-        if (isMounted) {
-          setBackendCases(data.cases || []);
-          const localIds = new Set(localHistory.map((item) => item.case_id));
-          const resetTimestamp = historyResetAt
-            ? new Date(historyResetAt).getTime()
-            : 0;
-          const visibleBackendCases = (data.cases || []).filter((item) => {
-            const timestamp = new Date(item.timestamp || "").getTime();
-            return Number.isFinite(timestamp) && timestamp > resetTimestamp;
-          });
-          const mergedCount =
-            localHistory.length +
-            visibleBackendCases.filter(
-              (item) =>
-                !localIds.has(item.case_id) &&
-                !dismissedHistoryIds.includes(item.case_id)
-            ).length;
-          onHistoryCountChange?.(mergedCount);
-          setLoadingBackend(false);
-        }
-      })
-      .catch(() => {
-        if (isMounted) setLoadingBackend(false);
-      });
-
-    return () => {
-      isMounted = false;
-    };
-  }, [
-    isOpen,
-    backendUrl,
-    localHistory,
-    dismissedHistoryIds,
-    historyResetAt,
-    onHistoryCountChange,
-  ]);
-
   if (!isOpen) return null;
 
-  // Merge local session runs with backend repository cases
-  const mergedCases = [
-    ...localHistory.map((item) => ({
-      ...item,
-      isLocalSession: true,
-    })),
-    ...backendCases
-      .filter(
-        (bc) =>
-          Number.isFinite(new Date(bc.timestamp || "").getTime()) &&
-          new Date(bc.timestamp).getTime() > new Date(historyResetAt).getTime() &&
-          !localHistory.some((lh) => lh.case_id === bc.case_id) &&
-          !dismissedHistoryIds.includes(bc.case_id)
-      )
-      .map((bc) => ({
-        case_id: bc.case_id,
-        scenario_name: classifyScenario(
-          {
-            amount: bc.amount,
-            counterparty_country: bc.counterparty_country,
-            origin_country: bc.origin_country,
-            destination_country: bc.destination_country,
-            memo: bc.memo,
-            counterparty_name: bc.counterparty_name || bc.scenario_name,
-          },
-          {
-            preliminary_risk_level: bc.risk_level || bc.preliminary_risk_level,
-            disposition_title:
-              bc.disposition_title ||
-              (bc.category === "untrusted_instructions"
-                ? DISPOSITION.EMERGENCY
-                : bc.amount > 10000
-                ? DISPOSITION.ESCALATE
-                : DISPOSITION.DISMISS),
-          }
-        ),
-        amount: bc.amount,
-        currency: bc.currency || "USD",
-        category: bc.category,
-        timestamp: bc.timestamp || new Date().toISOString(),
-        disposition_title:
-          bc.category === "untrusted_instructions"
-            ? DISPOSITION.EMERGENCY
-            : bc.amount > 10000
-            ? DISPOSITION.ESCALATE
-            : DISPOSITION.DISMISS,
-        isLocalSession: false,
-      })),
-  ];
+  // History log strictly contains user's investigated cases and searched scenarios
+  const mergedCases = localHistory.map((item) => ({
+    ...item,
+    isLocalSession: true,
+  }));
 
   // Filter cases based on search and disposition selector
   const filteredCases = mergedCases.filter((item) => {
-    const matchesSearch =
-      (item.case_id || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (item.scenario_name || "").toLowerCase().includes(searchQuery.toLowerCase());
+    const q = searchQuery.toLowerCase().trim();
+    if (q) {
+      const matchesSearch =
+        (item.case_id || "").toLowerCase().includes(q) ||
+        (item.scenario_name || "").toLowerCase().includes(q) ||
+        (item.search_query || "").toLowerCase().includes(q) ||
+        (item.counterparty_name || "").toLowerCase().includes(q) ||
+        (item.memo || "").toLowerCase().includes(q) ||
+        (item.payload?.memo || "").toLowerCase().includes(q) ||
+        (item.payload?.counterparty_name || "").toLowerCase().includes(q) ||
+        (item.category || "").toLowerCase().includes(q) ||
+        (String(item.amount) || "").includes(q);
 
-    if (!matchesSearch) return false;
+      if (!matchesSearch) return false;
+    }
 
     if (filterDisposition === "ALL") return true;
     if (filterDisposition === "DISMISS")
@@ -300,20 +207,13 @@ export default function HistoryDrawer({
             {localHistory.length > 0 && (
               <button
                 onClick={() => {
-                  const idsToDismiss = [
-                    ...new Set([
-                      ...localHistory.map((item) => item.case_id),
-                      ...backendCases.map((item) => item.case_id),
-                    ]),
-                  ];
-                  onDismissedHistoryChange?.(idsToDismiss);
-                  onClearLocalHistory(idsToDismiss);
+                  onClearLocalHistory?.();
                 }}
                 className="text-[11px] text-rose-400 hover:text-rose-300 flex items-center gap-1 transition-colors"
-                title="Clear current session history"
+                title="Clear investigation history"
               >
                 <Trash2 className="w-3 h-3" />
-                Clear Session
+                Clear History
               </button>
             )}
           </div>
@@ -321,10 +221,11 @@ export default function HistoryDrawer({
 
         {/* Cases List */}
         <div className="flex-1 overflow-y-auto p-4 space-y-3 divide-y divide-slate-800/40">
-          {loadingBackend && mergedCases.length === 0 ? (
+          {mergedCases.length === 0 ? (
             <div className="text-center py-12 text-slate-500 text-xs font-mono">
-              <RotateCcw className="w-5 h-5 animate-spin mx-auto mb-2 text-indigo-400" />
-              Loading compliance cases from repository...
+              <History className="w-6 h-6 mx-auto mb-2 text-indigo-400 opacity-60" />
+              <div className="font-semibold text-slate-400">No investigation cases logged yet</div>
+              <p className="text-[11px] text-slate-500 mt-1">Run a triage or search a transaction scenario to add to history.</p>
             </div>
           ) : filteredCases.length === 0 ? (
             <div className="text-center py-12 text-slate-500 text-xs">
@@ -362,10 +263,20 @@ export default function HistoryDrawer({
                           Active Run
                         </span>
                       )}
+                      {item.search_query && (
+                        <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-cyan-500/10 text-cyan-300 border border-cyan-500/20">
+                          🔍 Searched
+                        </span>
+                      )}
                     </div>
                     <div className="text-xs text-slate-300 font-medium line-clamp-1">
                       {item.scenario_name}
                     </div>
+                    {item.search_query && (
+                      <div className="text-[10px] text-cyan-400/80 font-mono italic truncate max-w-[280px]">
+                        "{item.search_query}"
+                      </div>
+                    )}
                   </div>
                   <div>{getDispositionBadge(item.disposition_title)}</div>
                 </div>

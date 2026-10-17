@@ -95,9 +95,8 @@ export const SENSITIVITY_CONFIG = {
 export const STORAGE_KEYS = {
   CUSTOM_GEMINI_KEY: "ceylix_custom_gemini_key",
   SENSITIVITY_MODE:  "ceylix_sensitivity_mode",
-  CASE_HISTORY:      "ceylix_case_history",
-  DISMISSED_HISTORY: "ceylix_dismissed_history",
-  HISTORY_RESET_AT:  "ceylix_history_reset_at",
+  CASE_HISTORY:      "ceylix_case_history_v2",
+  DISMISSED_HISTORY: "ceylix_dismissed_history_v2",
   MODEL_PREFERENCE:  "ceylix_model_preference",
 };
 
@@ -238,12 +237,34 @@ function parseNaturalLanguageWireUnsafe(rawText, fallbackPayload = {}) {
   const text = rawText.trim();
   if (!text) return fallbackPayload;
 
+  // 0. Preset Scenario matching (e.g. "Scenario A", "CASE-051", "Scenario B", "CASE-002", "Scenario C", "CASE-088")
+  const lowerText = text.toLowerCase();
+  for (const [key, scn] of Object.entries(PRESET_SCENARIOS)) {
+    if (
+      lowerText === key.toLowerCase() ||
+      lowerText === scn.case_id.toLowerCase() ||
+      lowerText === `case ${scn.case_id.toLowerCase()}` ||
+      lowerText.includes(scn.case_id.toLowerCase())
+    ) {
+      return {
+        ...scn.payload,
+        _matchedPresetKey: key,
+        case_id: scn.case_id,
+        scenario_name: scn.name,
+      };
+    }
+  }
+
+  const searchId = Math.floor(100000 + Math.random() * 900000);
+
   // 1. Direct JSON Ingestion
   if (text.startsWith("{") && text.endsWith("}")) {
     try {
       const parsed = JSON.parse(text);
       return {
-        transaction_id: parsed.transaction_id || `TX-JSON-${Math.floor(1000 + Math.random() * 9000)}`,
+        transaction_id: parsed.transaction_id || `TX-JSON-${searchId}`,
+        case_id: parsed.case_id || `CASE-JSON-${searchId}`,
+        search_query: text,
         timestamp: parsed.timestamp || new Date().toISOString(),
         account_id: parsed.account_id || fallbackPayload.account_id || "acc_00994120",
         customer_id: parsed.customer_id || fallbackPayload.customer_id || "CUST-INGEST",
@@ -274,8 +295,10 @@ function parseNaturalLanguageWireUnsafe(rawText, fallbackPayload = {}) {
     // Preserve authoritative baseline transaction data completely; keep prompt strictly in memo
     return {
       ...fallbackPayload,
-      transaction_id: fallbackPayload.transaction_id || `TX-CUSTOM-${Math.floor(1000 + Math.random() * 9000)}`,
-      timestamp: fallbackPayload.timestamp || new Date().toISOString(),
+      transaction_id: `TX-CUSTOM-${searchId}`,
+      case_id: `CASE-CUSTOM-${searchId}`,
+      search_query: text,
+      timestamp: new Date().toISOString(),
       amount: fallbackPayload.amount !== undefined ? fallbackPayload.amount : 101.12,
       currency: fallbackPayload.currency || "USD",
       counterparty_name: fallbackPayload.counterparty_name || "Commercial Beneficiary",
@@ -400,7 +423,8 @@ function parseNaturalLanguageWireUnsafe(rawText, fallbackPayload = {}) {
   }
 
   const finalAmount = amount !== null ? amount : (fallbackPayload.amount !== undefined ? fallbackPayload.amount : 25000);
-  const txId = fallbackPayload.transaction_id || `TX-CUSTOM-${Math.floor(1000 + Math.random() * 9000)}`;
+  const txId = `TX-SRCH-${searchId}`;
+  const caseId = `CASE-SRCH-${searchId}`;
 
   // Default institutional bank based on corridor
   let counterpartyBank = fallbackPayload.counterparty_bank || "Bank of America, N.A.";
@@ -411,7 +435,9 @@ function parseNaturalLanguageWireUnsafe(rawText, fallbackPayload = {}) {
 
   return {
     transaction_id: txId,
-    timestamp: fallbackPayload.timestamp || new Date().toISOString(),
+    case_id: caseId,
+    search_query: text,
+    timestamp: new Date().toISOString(),
     account_id: fallbackPayload.account_id || "acc_00889124",
     customer_id: fallbackPayload.customer_id || "CUST-LIVE-01",
     amount: finalAmount,

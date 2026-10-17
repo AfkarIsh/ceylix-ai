@@ -402,8 +402,6 @@ function AppContent() {
     if (existing) return existing;
 
     const resetAt = new Date().toISOString();
-    localStorage.removeItem(STORAGE_KEYS.CASE_HISTORY);
-    localStorage.removeItem(STORAGE_KEYS.DISMISSED_HISTORY);
     localStorage.setItem(STORAGE_KEYS.HISTORY_RESET_AT, resetAt);
     return resetAt;
   });
@@ -414,7 +412,6 @@ function AppContent() {
     } catch {
       return [];
     }
-
   });
   const [dismissedHistoryIds, setDismissedHistoryIds] = useState(() => {
     try {
@@ -427,9 +424,7 @@ function AppContent() {
   const [historyCount, setHistoryCount] = useState(() => caseHistory.length);
 
   useEffect(() => {
-    setHistoryCount((currentCount) =>
-      currentCount < caseHistory.length ? caseHistory.length : currentCount
-    );
+    setHistoryCount(caseHistory.length);
   }, [caseHistory.length]);
 
   const abortRef = useRef(null);
@@ -495,7 +490,7 @@ function AppContent() {
     let finalResult = null;
 
     const payloadToUse = overridePayload || activePayload;
-    const caseIdToUse = overrideCaseId || (overridePayload?.transaction_id
+    const caseIdToUse = overrideCaseId || (overridePayload?.case_id) || (overridePayload?.transaction_id
       ? `CASE-${overridePayload.transaction_id.replace(/^TX-/, '')}`
       : activeCaseId);
     const keyToUse = overrideKey || selectedScenarioKey;
@@ -596,9 +591,17 @@ function AppContent() {
 
       // Append run to case history if successful
       if (finalResult) {
+        const scenarioTitle = payloadToUse.search_query
+          ? `Searched: "${payloadToUse.search_query.length > 32 ? payloadToUse.search_query.slice(0, 32) + '…' : payloadToUse.search_query}"`
+          : classifyScenario(payloadToUse, finalResult);
+
         const historyItem = {
+          history_id: `${caseIdToUse}-${Date.now()}`,
           case_id: caseIdToUse,
-          scenario_name: classifyScenario(payloadToUse, finalResult),
+          scenario_name: scenarioTitle,
+          search_query: payloadToUse.search_query || null,
+          counterparty_name: payloadToUse.counterparty_name || "",
+          memo: payloadToUse.memo || "",
           amount: payloadToUse.amount,
           currency: payloadToUse.currency || "USD",
           timestamp: new Date().toISOString(),
@@ -608,15 +611,16 @@ function AppContent() {
           grounding_status: finalResult.grounding_status,
           error_message: finalResult.error_message,
           sensitivity_mode: sensitivityMode,
-          payload: { ...payloadToUse },
+          payload: { ...payloadToUse, case_id: caseIdToUse },
           result: { ...finalResult },
         };
 
         setCaseHistory((prev) => {
-          const updated = [
-            historyItem,
-            ...prev.filter((p) => p.case_id !== caseIdToUse),
-          ];
+          const now = Date.now();
+          const filtered = prev.filter(
+            (p) => !(p.case_id === caseIdToUse && Math.abs(new Date(p.timestamp).getTime() - now) < 1500)
+          );
+          const updated = [historyItem, ...filtered];
           try {
             localStorage.setItem(STORAGE_KEYS.CASE_HISTORY, JSON.stringify(updated));
           } catch {
@@ -662,10 +666,22 @@ function AppContent() {
   }, []);
 
   // ── Select Historical Case from Drawer ───────────────────────────────────
-  const handleSelectHistoricalCase = useCallback((item) => {
+  const handleSelectHistoricalCase = useCallback(async (item) => {
     setActiveCaseId(item.case_id);
     if (item.payload) {
       setActivePayload({ ...item.payload });
+    } else {
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/v1/cases/${item.case_id}`);
+        if (res.ok) {
+          const fullCase = await res.json();
+          if (fullCase?.transaction) {
+            setActivePayload({ ...fullCase.transaction });
+          }
+        }
+      } catch (err) {
+        console.warn("[Ceylix] Could not fetch full benchmark case:", err);
+      }
     }
     if (item.result) {
       setInvestigationResult({ ...item.result });
@@ -687,12 +703,11 @@ function AppContent() {
   }, []);
 
   // ── Clear Local Session History ──────────────────────────────────────────
-  const handleClearLocalHistory = useCallback((idsToDismiss = []) => {
+  const handleClearLocalHistory = useCallback(() => {
     setCaseHistory([]);
     setHistoryCount(0);
-    setDismissedHistoryIds(idsToDismiss);
     localStorage.removeItem(STORAGE_KEYS.CASE_HISTORY);
-    localStorage.setItem(STORAGE_KEYS.DISMISSED_HISTORY, JSON.stringify(idsToDismiss));
+    localStorage.removeItem(STORAGE_KEYS.DISMISSED_HISTORY);
   }, []);
 
   // ── Firestore Sync ───────────────────────────────────────────────────────
@@ -856,10 +871,6 @@ function AppContent() {
         onClose={() => setIsHistoryOpen(false)}
         backendUrl={BACKEND_URL}
         localHistory={caseHistory}
-        dismissedHistoryIds={dismissedHistoryIds}
-        historyResetAt={historyResetAt}
-        onDismissedHistoryChange={setDismissedHistoryIds}
-        onHistoryCountChange={setHistoryCount}
         onSelectCase={handleSelectHistoricalCase}
         onClearLocalHistory={handleClearLocalHistory}
       />

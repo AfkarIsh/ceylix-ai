@@ -343,7 +343,12 @@ export function GeminiHeroView({
       return;
     }
     const parsed = parseNaturalLanguageWire(submittedText, payload);
-    onRunTriage?.(parsed);
+    if (parsed._matchedPresetKey && onSelectScenario) {
+      onSelectScenario(parsed._matchedPresetKey);
+      return;
+    }
+    const searchCaseId = parsed.case_id || `CASE-SRCH-${Math.floor(100000 + Math.random() * 900000)}`;
+    onRunTriage?.(parsed, searchCaseId);
   };
 
   const handleQuickChipClick = (scenarioKey) => {
@@ -470,7 +475,12 @@ export default function TelemetryPanel({
       return;
     }
     const parsed = parseNaturalLanguageWire(submittedText, payload);
-    onRunTriage?.(parsed);
+    if (parsed._matchedPresetKey && onSelectScenario) {
+      onSelectScenario(parsed._matchedPresetKey);
+      return;
+    }
+    const searchCaseId = parsed.case_id || `CASE-SRCH-${Math.floor(100000 + Math.random() * 900000)}`;
+    onRunTriage?.(parsed, searchCaseId);
   };
 
   return (
