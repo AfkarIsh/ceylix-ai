@@ -96,6 +96,7 @@ export const STORAGE_KEYS = {
   CUSTOM_GEMINI_KEY: "ceylix_custom_gemini_key",
   SENSITIVITY_MODE:  "ceylix_sensitivity_mode",
   CASE_HISTORY:      "ceylix_case_history",
+  DISMISSED_HISTORY: "ceylix_dismissed_history",
   MODEL_PREFERENCE:  "ceylix_model_preference",
 };
 

@@ -54,6 +54,8 @@ export default function HistoryDrawer({
   onClose,
   backendUrl,
   localHistory = [],
+  dismissedHistoryIds = [],
+  onDismissedHistoryChange,
   onHistoryCountChange,
   onSelectCase,
   onClearLocalHistory,
@@ -84,7 +86,11 @@ export default function HistoryDrawer({
           const localIds = new Set(localHistory.map((item) => item.case_id));
           const mergedCount =
             localHistory.length +
-            (data.cases || []).filter((item) => !localIds.has(item.case_id)).length;
+            (data.cases || []).filter(
+              (item) =>
+                !localIds.has(item.case_id) &&
+                !dismissedHistoryIds.includes(item.case_id)
+            ).length;
           onHistoryCountChange?.(mergedCount);
           setLoadingBackend(false);
         }
@@ -96,7 +102,13 @@ export default function HistoryDrawer({
     return () => {
       isMounted = false;
     };
-  }, [isOpen, backendUrl, localHistory, onHistoryCountChange]);
+  }, [
+    isOpen,
+    backendUrl,
+    localHistory,
+    dismissedHistoryIds,
+    onHistoryCountChange,
+  ]);
 
   if (!isOpen) return null;
 
@@ -107,7 +119,11 @@ export default function HistoryDrawer({
       isLocalSession: true,
     })),
     ...backendCases
-      .filter((bc) => !localHistory.some((lh) => lh.case_id === bc.case_id))
+      .filter(
+        (bc) =>
+          !localHistory.some((lh) => lh.case_id === bc.case_id) &&
+          !dismissedHistoryIds.includes(bc.case_id)
+      )
       .map((bc) => ({
         case_id: bc.case_id,
         scenario_name: classifyScenario(
@@ -272,7 +288,16 @@ export default function HistoryDrawer({
 
             {localHistory.length > 0 && (
               <button
-                onClick={onClearLocalHistory}
+                onClick={() => {
+                  const idsToDismiss = [
+                    ...new Set([
+                      ...localHistory.map((item) => item.case_id),
+                      ...backendCases.map((item) => item.case_id),
+                    ]),
+                  ];
+                  onDismissedHistoryChange?.(idsToDismiss);
+                  onClearLocalHistory(idsToDismiss);
+                }}
                 className="text-[11px] text-rose-400 hover:text-rose-300 flex items-center gap-1 transition-colors"
                 title="Clear current session history"
               >

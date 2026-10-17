@@ -406,6 +406,14 @@ function AppContent() {
     }
 
   });
+  const [dismissedHistoryIds, setDismissedHistoryIds] = useState(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.DISMISSED_HISTORY);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
   const [historyCount, setHistoryCount] = useState(() => caseHistory.length);
 
   useEffect(() => {
@@ -606,6 +614,11 @@ function AppContent() {
           }
           return updated;
         });
+        setDismissedHistoryIds((prev) => {
+          const updated = prev.filter((id) => id !== caseIdToUse);
+          localStorage.setItem(STORAGE_KEYS.DISMISSED_HISTORY, JSON.stringify(updated));
+          return updated;
+        });
       }
     }
   }, [
@@ -664,10 +677,12 @@ function AppContent() {
   }, []);
 
   // ── Clear Local Session History ──────────────────────────────────────────
-  const handleClearLocalHistory = useCallback(() => {
+  const handleClearLocalHistory = useCallback((idsToDismiss = []) => {
     setCaseHistory([]);
     setHistoryCount(0);
+    setDismissedHistoryIds(idsToDismiss);
     localStorage.removeItem(STORAGE_KEYS.CASE_HISTORY);
+    localStorage.setItem(STORAGE_KEYS.DISMISSED_HISTORY, JSON.stringify(idsToDismiss));
   }, []);
 
   // ── Firestore Sync ───────────────────────────────────────────────────────
@@ -831,6 +846,8 @@ function AppContent() {
         onClose={() => setIsHistoryOpen(false)}
         backendUrl={BACKEND_URL}
         localHistory={caseHistory}
+        dismissedHistoryIds={dismissedHistoryIds}
+        onDismissedHistoryChange={setDismissedHistoryIds}
         onHistoryCountChange={setHistoryCount}
         onSelectCase={handleSelectHistoricalCase}
         onClearLocalHistory={handleClearLocalHistory}
