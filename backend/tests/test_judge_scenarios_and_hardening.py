@@ -753,9 +753,9 @@ def test_p0_test_5_natural_language_rejection():
         "Verify that the fast path is permitted under your declared policy when mandatory screening is unresolved."
     )
     classified_intent = classify_input_intent(explanatory_sentence)
-    assert classified_intent == "NATURAL_LANGUAGE_INQUIRY"
-    assert classified_intent != "PAYMENT_INSTRUCTION"
-    assert classified_intent != "TRANSACTION_INVESTIGATION"
+    assert classified_intent.input_intent == "NATURAL_LANGUAGE_INQUIRY"
+    assert classified_intent.input_intent != "PAYMENT_INSTRUCTION"
+    assert classified_intent.input_intent != "TRANSACTION_INVESTIGATION"
 
 
 
