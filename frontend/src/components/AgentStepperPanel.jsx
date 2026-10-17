@@ -118,40 +118,60 @@ function RiskGauge({ score }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Probe Status Chip
 // ─────────────────────────────────────────────────────────────────────────────
-function ProbeChip({ status }) {
-  switch (status) {
-    case 'CLEAR':
-      return (
-        <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded border text-emerald-400 bg-emerald-950/40 border-emerald-800/80 flex-shrink-0">
-          CLEAR
+function ProbeChip({ status, sourceLabel }) {
+  const badge = (() => {
+    switch (status) {
+      case 'CLEAR':
+        return (
+          <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded border text-emerald-400 bg-emerald-950/40 border-emerald-800/80 flex-shrink-0">
+            CLEAR
+          </span>
+        );
+      case 'MATCHED':
+        return (
+          <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded border text-rose-400 bg-rose-950/40 border-rose-800/80 flex-shrink-0">
+            MATCHED
+          </span>
+        );
+      case 'RUNNING':
+        return (
+          <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded border text-cyan-400 bg-cyan-950/40 border-cyan-800/80 flex-shrink-0 flex items-center gap-1">
+            <Loader2 className="w-2.5 h-2.5 animate-spin" />
+            RUNNING
+          </span>
+        );
+      case 'DATA_UNAVAILABLE':
+      case 'UNAVAILABLE':
+        return (
+          <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded border text-amber-400 bg-amber-950/40 border-amber-800/80 flex-shrink-0">
+            UNAVAILABLE
+          </span>
+        );
+      case 'SIMULATED':
+        return (
+          <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded border text-indigo-400 bg-indigo-950/40 border-indigo-800/80 flex-shrink-0">
+            SIMULATED
+          </span>
+        );
+      default:
+        return (
+          <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded border text-slate-400 bg-slate-900 border-slate-800 flex-shrink-0">
+            {status || 'UNKNOWN'}
+          </span>
+        );
+    }
+  })();
+
+  return (
+    <div className="flex items-center gap-1.5 flex-shrink-0">
+      {sourceLabel && (
+        <span className="text-[8px] font-mono text-slate-500 bg-slate-900/80 border border-slate-800/80 px-1 py-0.5 rounded hidden sm:inline" title={sourceLabel}>
+          {sourceLabel.includes("Live") ? "LIVE EXT" : "LOCAL RULE"}
         </span>
-      );
-    case 'MATCHED':
-      return (
-        <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded border text-rose-400 bg-rose-950/40 border-rose-800/80 flex-shrink-0">
-          MATCHED
-        </span>
-      );
-    case 'RUNNING':
-      return (
-        <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded border text-cyan-400 bg-cyan-950/40 border-cyan-800/80 flex-shrink-0 flex items-center gap-1">
-          <Loader2 className="w-2.5 h-2.5 animate-spin" />
-          RUNNING
-        </span>
-      );
-    case 'DATA_UNAVAILABLE':
-      return (
-        <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded border text-amber-400 bg-amber-950/40 border-amber-800/80 flex-shrink-0">
-          UNAVAILABLE
-        </span>
-      );
-    default:
-      return (
-        <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded border text-slate-400 bg-slate-900 border-slate-800 flex-shrink-0">
-          {status}
-        </span>
-      );
-  }
+      )}
+      {badge}
+    </div>
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -309,9 +329,9 @@ export default function AgentStepperPanel({
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <ShieldAlert className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
-                  <span className="text-[11px] font-medium text-slate-300">OFAC SDN & Consolidated List</span>
+                  <span className="text-[11px] font-medium text-slate-300">OFAC SDN & Watchlists</span>
                 </div>
-                <ProbeChip status={ofacProbe.status} />
+                <ProbeChip status={ofacProbe.status} sourceLabel={ofacProbe.source_label} />
               </div>
               <p className="text-[10px] text-slate-500 mt-1.5 ml-5 leading-snug">
                 {ofacProbe.detail}
@@ -323,9 +343,9 @@ export default function AgentStepperPanel({
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Globe className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
-                  <span className="text-[11px] font-medium text-slate-300">IP Geolocation (ip-api.com)</span>
+                  <span className="text-[11px] font-medium text-slate-300">IP Routing & Geolocation</span>
                 </div>
-                <ProbeChip status={ipGeoProbe.status} />
+                <ProbeChip status={ipGeoProbe.status} sourceLabel={ipGeoProbe.source_label} />
               </div>
               <p className="text-[10px] text-slate-500 mt-1.5 ml-5 leading-snug">
                 {ipGeoProbe.detail}
@@ -339,7 +359,7 @@ export default function AgentStepperPanel({
                   <Database className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
                   <span className="text-[11px] font-medium text-slate-300">Core KYC & Velocity Baseline</span>
                 </div>
-                <ProbeChip status={coreKycProbe.status} />
+                <ProbeChip status={coreKycProbe.status} sourceLabel={coreKycProbe.source_label} />
               </div>
               <p className="text-[10px] text-slate-500 mt-1.5 ml-5 leading-snug">
                 {coreKycProbe.detail}

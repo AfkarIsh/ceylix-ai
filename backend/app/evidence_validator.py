@@ -33,6 +33,56 @@ EVIDENCE_FRESHNESS_LIMITS_DAYS: Dict[str, float] = {
     "INVOICE_RECEIPT": 60.0,          # 60 days
 }
 
+
+def _normalized_entity(value: Any) -> str:
+    return re.sub(r"[^A-Z0-9]+", " ", str(value or "").upper()).strip()
+
+
+def evidence_belongs_to_case(record: EvidenceRecord, case: InvestigationCase) -> bool:
+    """Reject evidence explicitly bound to another case, transaction, or customer."""
+    return all(
+        (
+            not expected
+            or not actual
+            or str(actual).strip() == str(expected).strip()
+        )
+        for actual, expected in (
+            (record.case_id, case.case_id),
+            (record.transaction_id or record.data.get("transaction_id"), case.transaction.transaction_id),
+            (record.customer_id or record.data.get("customer_id"), case.transaction.customer_id),
+        )
+    )
+
+
+def usable_entity_sanctions_status(
+    record: Optional[EvidenceRecord],
+    transaction: Transaction,
+) -> str:
+    """
+    Return a sanctions status only when a source record supports the entity claim.
+
+    A jurisdiction, bank location, substring, or missing provider record is not an
+    entity-level sanctions match.
+    """
+    if record is None:
+        return "UNKNOWN"
+    status = str(record.data.get("match_status", "UNKNOWN")).upper()
+    if status == "NO_MATCH":
+        return "NO_MATCH"
+    if status not in {"CONFIRMED_MATCH", "POTENTIAL_MATCH", "PEP_HIT"}:
+        return "UNKNOWN"
+
+    matched_name = record.data.get("matched_name") or record.data.get("counterparty_name")
+    matched_account = record.data.get("matched_account") or record.data.get("counterparty_account")
+    exact_name = bool(matched_name) and _normalized_entity(matched_name) == _normalized_entity(transaction.counterparty_name)
+    exact_account = bool(matched_account) and str(matched_account).strip() == str(transaction.counterparty_account).strip()
+    has_list_reference = bool(record.data.get("list_id") or record.data.get("source_record_id") or record.source_version)
+    has_source = bool(record.source_system and record.evidence_id and record.timestamp)
+
+    if not (has_source and has_list_reference and (exact_name or exact_account)):
+        return "UNKNOWN"
+    return status
+
 # Injection indicators in untrusted inputs
 PROMPT_INJECTION_PATTERNS = [
     r"\[SYSTEM OVERRIDE\]",
@@ -174,6 +224,26 @@ def check_evidence_contradictions(case: InvestigationCase) -> List[Dict[str, Any
     # 4. Sanctions screening contradictory feeds
     sanctions_rec = records_by_type.get("SANCTIONS_PEP_SCREENING")
     if sanctions_rec:
+        recorded_name = sanctions_rec.data.get("counterparty_name")
+        if (
+            recorded_name
+            and _normalized_entity(recorded_name) != _normalized_entity(case.transaction.counterparty_name)
+        ):
+            conflicts.append({
+                "type": "SANCTIONS_ENTITY_MISMATCH",
+                "evidence_ids": [sanctions_rec.evidence_id],
+                "description": (
+                    f"Screening record names '{recorded_name}', not "
+                    f"beneficiary '{case.transaction.counterparty_name}'."
+                ),
+            })
+        recorded_account = sanctions_rec.data.get("counterparty_account")
+        if recorded_account and recorded_account != case.transaction.counterparty_account:
+            conflicts.append({
+                "type": "SANCTIONS_ACCOUNT_MISMATCH",
+                "evidence_ids": [sanctions_rec.evidence_id],
+                "description": "Screening record account does not match the transaction beneficiary account.",
+            })
         feed_a = sanctions_rec.data.get("feed_a_status")
         feed_b = sanctions_rec.data.get("feed_b_status")
         if feed_a and feed_b and feed_a != feed_b:
@@ -183,13 +253,45 @@ def check_evidence_contradictions(case: InvestigationCase) -> List[Dict[str, Any
                 "description": f"Sanctions feed A ({feed_a}) directly contradicts feed B ({feed_b})"
             })
 
+    # 5. Contradictory KYC profile records across multiple providers
+    kyc_records = [r for r in case.evidence_records if r.evidence_type == "KYC_PROFILE"]
+    if len(kyc_records) >= 2:
+        statuses = {r.data.get("verification_status") for r in kyc_records if r.data.get("verification_status")}
+        has_verified = "VERIFIED" in statuses
+        has_failed = any(
+            str(s).upper() in ("FAILED", "FAILED_FRAUDULENT_ID", "FRAUDULENT", "REJECTED", "UNVERIFIED")
+            for s in statuses
+        )
+        if has_verified and has_failed:
+            conflicts.append({
+                "type": "KYC_VERIFICATION_CONTRADICTION",
+                "evidence_ids": [r.evidence_id for r in kyc_records],
+                "description": f"Conflicting KYC verification statuses across providers: {statuses}"
+            })
+
+    # 6. Contradictory Sanctions screening records across multiple feeds
+    sanctions_records = [r for r in case.evidence_records if r.evidence_type == "SANCTIONS_PEP_SCREENING"]
+    if len(sanctions_records) >= 2:
+        m_statuses = {r.data.get("match_status") for r in sanctions_records if r.data.get("match_status")}
+        has_hit = any(s in ("CONFIRMED_MATCH", "POTENTIAL_MATCH", "PEP_HIT") for s in m_statuses)
+        has_clear = "NO_MATCH" in m_statuses
+        if has_hit and has_clear:
+            conflicts.append({
+                "type": "SANCTIONS_FEED_CONTRADICTION",
+                "evidence_ids": [r.evidence_id for r in sanctions_records],
+                "description": f"Conflicting sanctions screening statuses across feeds: {m_statuses}"
+            })
+
     return conflicts
 
 
 def check_missing_required_evidence(case: InvestigationCase) -> List[str]:
     """Check mandatory evidence types per regulatory risk policy."""
     missing = []
-    available_types = {r.evidence_type for r in case.evidence_records}
+    available_types = {
+        r.evidence_type for r in case.evidence_records
+        if evidence_belongs_to_case(r, case)
+    }
 
     # Policy: High value wires (>= $10,000) or international wires require KYC and Sanctions screening
     is_high_value = case.transaction.amount >= 10000.0
@@ -198,7 +300,21 @@ def check_missing_required_evidence(case: InvestigationCase) -> List[str]:
     if is_high_value or is_wire:
         if "KYC_PROFILE" not in available_types:
             missing.append("KYC_PROFILE")
-        if "SANCTIONS_PEP_SCREENING" not in available_types:
+        sanctions_record = next(
+            (
+                record for record in case.evidence_records
+                if record.evidence_type == "SANCTIONS_PEP_SCREENING"
+                and evidence_belongs_to_case(record, case)
+            ),
+            None,
+        )
+        if (
+            sanctions_record is None
+            or (
+                usable_entity_sanctions_status(sanctions_record, case.transaction) == "UNKNOWN"
+                and sanctions_record.data.get("match_status") != "NO_MATCH"
+            )
+        ):
             missing.append("SANCTIONS_PEP_SCREENING")
 
     # Policy: Remote channels require device or IP telemetry
@@ -226,15 +342,13 @@ def validate_claims(
         
         # 1. Evidence ID verification
         if not v_claim.evidence_ids:
-            # Claims asserting facts without citing evidence are unsupported
-            if v_claim.claim_type in ("factual_assertion", "rule_result"):
-                v_claim.support_status = "unsupported"
-                v_claim.review_required = True
-                v_claim.validation_notes = "Claim asserts factual or rule outcome without citing evidence IDs."
-                validated.append(v_claim)
-                continue
+            v_claim.support_status = "unsupported"
+            v_claim.review_required = True
+            v_claim.validation_notes = "Claim asserts a material outcome without citing evidence IDs."
+            validated.append(v_claim)
+            continue
 
-        # Check if all cited IDs exist
+        # Check if all cited IDs exist in this exact case
         non_existent_ids = [
             eid for eid in v_claim.evidence_ids
             if eid != tx_id and eid not in evidence_id_map
@@ -242,7 +356,52 @@ def validate_claims(
         if non_existent_ids:
             v_claim.support_status = "unsupported"
             v_claim.review_required = True
-            v_claim.validation_notes = f"Referenced non-existent evidence IDs: {non_existent_ids}"
+            v_claim.validation_notes = f"Referenced non-existent or foreign evidence IDs: {non_existent_ids}"
+            validated.append(v_claim)
+            continue
+
+        # 1b. Validate evidence record case and customer binding
+        foreign_evidence = False
+        foreign_note = ""
+        for eid in v_claim.evidence_ids:
+            if eid in evidence_id_map:
+                rec = evidence_id_map[eid]
+                if not evidence_belongs_to_case(rec, case):
+                    foreign_evidence = True
+                    mismatch_parts = []
+                    if rec.case_id and rec.case_id != case.case_id:
+                        mismatch_parts.append(f"bound to external case '{rec.case_id}'")
+                    if (rec.transaction_id or rec.data.get("transaction_id")) not in (None, tx_id):
+                        mismatch_parts.append(
+                            f"bound to external transaction '{rec.transaction_id or rec.data.get('transaction_id')}'"
+                        )
+                    if (rec.customer_id or rec.data.get("customer_id")) not in (
+                        None,
+                        case.transaction.customer_id,
+                    ):
+                        mismatch_parts.append(
+                            f"bound to external customer '{rec.customer_id or rec.data.get('customer_id')}'"
+                        )
+                    foreign_note = (
+                        f"Evidence ID '{eid}' is not bound to case '{case.case_id}', "
+                        f"transaction '{tx_id}', or customer '{case.transaction.customer_id}': "
+                        + ", ".join(mismatch_parts)
+                    )
+                    break
+                rec_tx = rec.data.get("transaction_id")
+                if rec_tx and rec_tx != tx_id:
+                    foreign_evidence = True
+                    foreign_note = f"Evidence ID '{eid}' is bound to external transaction '{rec_tx}', not case '{tx_id}'."
+                    break
+                rec_cust = rec.data.get("customer_id")
+                if rec_cust and rec_cust != case.transaction.customer_id:
+                    foreign_evidence = True
+                    foreign_note = f"Evidence ID '{eid}' is bound to external customer '{rec_cust}', not case customer '{case.transaction.customer_id}'."
+                    break
+        if foreign_evidence:
+            v_claim.support_status = "unsupported"
+            v_claim.review_required = True
+            v_claim.validation_notes = foreign_note
             validated.append(v_claim)
             continue
 
@@ -268,9 +427,9 @@ def validate_claims(
             validated.append(v_claim)
             continue
 
-        # 4. Check if claim adopted untrusted prompt injection assertions
+        # 4. Check if claim adopted untrusted prompt injection assertions or uncorroborated cyber claims
+        text_lower = v_claim.text.lower()
         if injection_detected:
-            text_lower = v_claim.text.lower()
             if any(term in text_lower for term in [
                 "exempt", "board of directors", "executive treaty", "override",
                 "disregard", "cleared by admin", "safe to ignore"
@@ -280,6 +439,78 @@ def validate_claims(
                 v_claim.validation_notes = "Claim echoes untrusted injection instruction from input payload."
                 validated.append(v_claim)
                 continue
+
+        # 4b. Disallow treating unverified memo cybersecurity logs as established financial fraud
+        CYBER_ASSERTIONS = ["ssh", "unauthorized login", "failed password", "brute force", "compromised deploy"]
+        if any(term in text_lower for term in CYBER_ASSERTIONS):
+            # Check if any evidence record actually supports a cybersecurity breach
+            has_cyber_evidence = any(
+                r.evidence_type in ("DEVICE_IP_TELEMETRY", "ACCOUNT_HISTORY") and
+                r.data.get("security_compromise_verified") is True
+                for r in case.evidence_records
+            )
+            if not has_cyber_evidence:
+                v_claim.support_status = "unsupported"
+                v_claim.review_required = True
+                v_claim.validation_notes = (
+                    "Claim asserts cybersecurity breach/SSH activity based solely on raw memo text "
+                    "without independent corroboration from security telemetry."
+                )
+                validated.append(v_claim)
+                continue
+
+        # 4c. Do not infer criminal activity or illicit conspiracy from an IP proxy indicator alone
+        if any(term in text_lower for term in ["criminal", "illicit syndicate", "fraud ring", "money laundering operation"]):
+            has_substantive_fraud = any(
+                r.data.get("fraud_confirmed") is True or r.data.get("security_compromise_verified") is True
+                for r in case.evidence_records
+            )
+            if not has_substantive_fraud:
+                v_claim.support_status = "unsupported"
+                v_claim.review_required = True
+                v_claim.validation_notes = "Criminal activity cannot be inferred from proxy or metadata indicators alone."
+                validated.append(v_claim)
+                continue
+
+        # 4d. Semantic verification against actual evidence data
+        semantic_issue = False
+        semantic_note = ""
+        for eid in v_claim.evidence_ids:
+            if eid in evidence_id_map:
+                rec = evidence_id_map[eid]
+                if rec.evidence_type == "SANCTIONS_PEP_SCREENING":
+                    m_status = usable_entity_sanctions_status(rec, case.transaction)
+                    if "confirmed match" in text_lower and m_status != "CONFIRMED_MATCH":
+                        semantic_issue = True
+                        semantic_note = f"Claim describes sanctions match as confirmed, but evidence '{eid}' reports '{m_status}'."
+                        break
+                    if any(term in text_lower for term in ["clean", "cleared", "no match", "not sanctioned"]) and m_status in ("CONFIRMED_MATCH", "POTENTIAL_MATCH", "PEP_HIT"):
+                        semantic_issue = True
+                        semantic_note = f"Claim claims sanctions cleared, but evidence '{eid}' shows match '{m_status}'."
+                        break
+                elif rec.evidence_type == "DEVICE_IP_TELEMETRY":
+                    vpn = rec.data.get("vpn_or_proxy_detected", False)
+                    if any(term in text_lower for term in ["no proxy", "residential connection", "direct ip"]) and vpn:
+                        semantic_issue = True
+                        semantic_note = f"Claim asserts direct connection, but evidence '{eid}' detected proxy/VPN."
+                        break
+                    if any(term in text_lower for term in ["proxy detected", "vpn active"]) and not vpn:
+                        semantic_issue = True
+                        semantic_note = f"Claim asserts proxy detected, but evidence '{eid}' reports clean IP routing."
+                        break
+                elif rec.evidence_type == "KYC_PROFILE":
+                    v_status = rec.data.get("verification_status", "UNVERIFIED")
+                    if any(term in text_lower for term in ["verified kyc", "kyc passed", "kyc complete"]) and v_status != "VERIFIED":
+                        semantic_issue = True
+                        semantic_note = f"Claim asserts verified KYC, but evidence '{eid}' has status '{v_status}'."
+                        break
+
+        if semantic_issue:
+            v_claim.support_status = "conflicting"
+            v_claim.review_required = True
+            v_claim.validation_notes = semantic_note
+            validated.append(v_claim)
+            continue
 
         # 5. Semantic field reference check if provided
         if v_claim.field_references:
@@ -328,6 +559,14 @@ def perform_deterministic_validation(
     """Run full deterministic validation suite over a case and its claims."""
     report = ValidationReport()
     report.total_claims_count = len(raw_claims)
+    foreign_records = [
+        r.evidence_id for r in case.evidence_records
+        if not evidence_belongs_to_case(r, case)
+    ]
+    if foreign_records:
+        report.validation_warnings.append(
+            f"Evidence records rejected for case binding mismatch: {foreign_records}"
+        )
 
     # 1. Untrusted instructions
     inj_detected, inj_details = detect_untrusted_instructions(case)
@@ -367,7 +606,10 @@ def perform_deterministic_validation(
     )
 
     # 6. Aggregate counts
-    evidence_id_set = {r.evidence_id for r in case.evidence_records} | {case.transaction.transaction_id}
+    evidence_id_set = {
+        r.evidence_id for r in case.evidence_records
+        if evidence_belongs_to_case(r, case)
+    } | {case.transaction.transaction_id}
     for c in report.validated_claims:
         if c.support_status == "unsupported":
             report.unsupported_claims_count += 1
@@ -381,3 +623,29 @@ def perform_deterministic_validation(
             report.traceable_claims_count += 1
 
     return report
+
+
+def compute_grounding_status(report: ValidationReport, fast_path: bool = False) -> str:
+    """
+    Substantive grounding status: FULLY_GROUNDED, PARTIALLY_GROUNDED, UNGROUNDED.
+    A result with zero quarantined claims is NOT automatically fully grounded.
+    """
+    if fast_path:
+        return "FULLY_GROUNDED"
+
+    if (
+        report.untrusted_instruction_detected
+        or report.unsupported_claims_count > 0
+        or report.conflicting_claims_count > 0
+        or (report.total_claims_count == 0)
+    ):
+        return "UNGROUNDED"
+
+    if (
+        report.stale_claims_count > 0
+        or report.missing_required_evidence
+        or (report.traceable_claims_count < report.total_claims_count)
+    ):
+        return "PARTIALLY_GROUNDED"
+
+    return "FULLY_GROUNDED"

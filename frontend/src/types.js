@@ -18,9 +18,10 @@ export const BACKEND_STATUS = {
 // ENUM: Final disposition labels
 // ─────────────────────────────────────────────────────────────────────────────
 export const DISPOSITION = {
-  DISMISS:   "DISMISS_FALSE_POSITIVE",
-  ESCALATE:  "ESCALATE_FOR_ANALYST_REVIEW",
-  EMERGENCY: "EMERGENCY_FREEZE",
+  DISMISS:        "DISMISS_FALSE_POSITIVE",
+  ESCALATE:       "ESCALATE_FOR_ANALYST_REVIEW",
+  EMERGENCY:      "EMERGENCY_FREEZE",
+  INPUT_MISMATCH: "ANALYST_REVIEW_INPUT_MISMATCH",
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -112,12 +113,17 @@ export const API = {
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPER: Map backend `decision` field to UI disposition_title
 // ─────────────────────────────────────────────────────────────────────────────
-export function mapDecisionToDisposition(decision, riskLevel, hasUntrustedInjection) {
+export function mapDecisionToDisposition(decision, riskLevel, hasUntrustedInjection, inputIntent) {
   if (hasUntrustedInjection && riskLevel === "HIGH") return DISPOSITION.EMERGENCY;
+  if (riskLevel === "HIGH") return DISPOSITION.ESCALATE;
+  if (inputIntent && inputIntent !== "PAYMENT_INSTRUCTION") {
+    return DISPOSITION.INPUT_MISMATCH;
+  }
   switch (decision) {
     case "RELEASE_WITH_PROVENANCE":  return DISPOSITION.DISMISS;
     case "RELEASE_QUALIFIED":        return DISPOSITION.DISMISS;
-    case "ABSTAIN_FOR_HUMAN_REVIEW": return DISPOSITION.ESCALATE;
+    case "ABSTAIN_FOR_HUMAN_REVIEW":
+      return DISPOSITION.INPUT_MISMATCH;
     default:
       return riskLevel === "LOW" ? DISPOSITION.DISMISS : DISPOSITION.ESCALATE;
   }
@@ -257,6 +263,30 @@ function parseNaturalLanguageWireUnsafe(rawText, fallbackPayload = {}) {
     }
   }
 
+  // 1b. Check for prompt/mismatched tasks pasted into ingestion bar
+  const isCyberPrompt = /\bssh\b/i.test(text) && (/\bfailed password\b/i.test(text) || /\blogin\b/i.test(text) || /\baccepted\b/i.test(text));
+  const isPolicyPrompt = /\biso(?:\/iec)?\s*27001\b/i.test(text) || /\bpolicy review\b/i.test(text);
+  const isInvoicePrompt = /\bextract (?:the )?(?:invoice|line items?)\b/i.test(text) || (/\bsupplier:\s*/i.test(text) && /\binvoice:\s*/i.test(text));
+
+  if (isCyberPrompt || isPolicyPrompt || isInvoicePrompt) {
+    // Preserve authoritative baseline transaction data completely; keep prompt strictly in memo
+    return {
+      ...fallbackPayload,
+      transaction_id: fallbackPayload.transaction_id || `TX-CUSTOM-${Math.floor(1000 + Math.random() * 9000)}`,
+      timestamp: fallbackPayload.timestamp || new Date().toISOString(),
+      amount: fallbackPayload.amount !== undefined ? fallbackPayload.amount : 101.12,
+      currency: fallbackPayload.currency || "USD",
+      counterparty_name: fallbackPayload.counterparty_name || "Commercial Beneficiary",
+      counterparty_country: fallbackPayload.counterparty_country || "US",
+      counterparty_bank: fallbackPayload.counterparty_bank || "Bank of America, N.A.",
+      origin_country: fallbackPayload.origin_country || "US",
+      destination_country: fallbackPayload.destination_country || fallbackPayload.counterparty_country || "US",
+      device_ip: fallbackPayload.device_ip || "198.51.100.24",
+      memo: text, // Keep untrusted text isolated in memo field
+      is_synthetic: true,
+    };
+  }
+
   // 2. Amount Extraction (Numbers, $175,000, 142.50 USD, 50k, 1.5M)
   let amount = null;
   const multiplierMatch = text.match(/\b(?:\$)?([0-9]+(?:\.[0-9]+)?)\s*(k|m|million|thousand)\b/i);
@@ -297,7 +327,7 @@ function parseNaturalLanguageWireUnsafe(rawText, fallbackPayload = {}) {
     "germany": "DE", "de": "DE",
   };
 
-  let originCountry = "US";
+  let originCountry = fallbackPayload.origin_country || "US";
   let destinationCountry = null;
 
   // Pattern: "from [Country] to [Country]"
@@ -329,7 +359,7 @@ function parseNaturalLanguageWireUnsafe(rawText, fallbackPayload = {}) {
       }
     }
   }
-  if (!destinationCountry) destinationCountry = "US";
+  if (!destinationCountry) destinationCountry = fallbackPayload.counterparty_country || "US";
 
   // 4. IP Address Extraction
   let ipAddress = null;
@@ -339,8 +369,9 @@ function parseNaturalLanguageWireUnsafe(rawText, fallbackPayload = {}) {
   }
 
   // 5. Beneficiary / Counterparty Name Extraction
+  // Strict matching to prevent prompt fragments (like "review", "failed password", "policy") from becoming names
   let counterpartyName = null;
-  const benMatch = text.match(/(?:to|beneficiary:\s*|counterparty:\s*)([A-Z][A-Za-z0-9\s.,&'-]+?)(?:\s+in\s+[A-Za-z]{2,15}|\s+via|\s+for|\s+from|\s+-|\s*$)/i);
+  const benMatch = text.match(/(?:beneficiary:\s*|counterparty:\s*)([A-Z][A-Za-z0-9\s.,&'-]+?)(?:\s+in\s+[A-Za-z]{2,15}|\s+via|\s+for|\s+from|\s+-|\s*$)/i);
   if (benMatch) {
     const cand = benMatch[1].trim();
     if (cand.length > 2 && !COUNTRY_MAP[cand.toLowerCase()]) {
@@ -354,7 +385,7 @@ function parseNaturalLanguageWireUnsafe(rawText, fallbackPayload = {}) {
     }
   }
   if (!counterpartyName) {
-    counterpartyName = fallbackPayload.counterparty_name || "Commercial Entity";
+    counterpartyName = fallbackPayload.counterparty_name || "Commercial Beneficiary";
   }
 
   // 6. Memo / Purpose Extraction
@@ -366,11 +397,11 @@ function parseNaturalLanguageWireUnsafe(rawText, fallbackPayload = {}) {
     memo = text;
   }
 
-  const finalAmount = amount !== null ? amount : (fallbackPayload.amount || 25000);
-  const txId = `TX-CUSTOM-${Math.floor(1000 + Math.random() * 9000)}`;
+  const finalAmount = amount !== null ? amount : (fallbackPayload.amount !== undefined ? fallbackPayload.amount : 25000);
+  const txId = fallbackPayload.transaction_id || `TX-CUSTOM-${Math.floor(1000 + Math.random() * 9000)}`;
 
   // Default institutional bank based on corridor
-  let counterpartyBank = "Bank of America, N.A.";
+  let counterpartyBank = fallbackPayload.counterparty_bank || "Bank of America, N.A.";
   if (destinationCountry === "IR") counterpartyBank = "Bank Melli Iran";
   else if (destinationCountry === "KP") counterpartyBank = "Foreign Trade Bank of DPRK";
   else if (destinationCountry === "CH") counterpartyBank = "Credit Suisse AG";
@@ -378,19 +409,19 @@ function parseNaturalLanguageWireUnsafe(rawText, fallbackPayload = {}) {
 
   return {
     transaction_id: txId,
-    timestamp: new Date().toISOString(),
+    timestamp: fallbackPayload.timestamp || new Date().toISOString(),
     account_id: fallbackPayload.account_id || "acc_00889124",
     customer_id: fallbackPayload.customer_id || "CUST-LIVE-01",
     amount: finalAmount,
-    currency: "USD",
-    channel: text.toUpperCase().includes("ONLINE") ? "ONLINE_BANKING" : "WIRE",
+    currency: fallbackPayload.currency || "USD",
+    channel: text.toUpperCase().includes("ONLINE") ? "ONLINE_BANKING" : (fallbackPayload.channel || "WIRE"),
     counterparty_account: fallbackPayload.counterparty_account || `US${Math.floor(10 + Math.random() * 89)}CP${Math.floor(100000000 + Math.random() * 900000000)}`,
     counterparty_name: counterpartyName,
     counterparty_bank: counterpartyBank,
     counterparty_country: destinationCountry,
     origin_country: originCountry,
     destination_country: destinationCountry,
-    device_ip: ipAddress || (destinationCountry === "IR" ? "185.220.101.5" : destinationCountry === "KP" ? "175.45.176.14" : "198.51.100.24"),
+    device_ip: ipAddress || fallbackPayload.device_ip || "198.51.100.24",
     memo: memo,
     is_synthetic: true,
   };
@@ -456,7 +487,7 @@ export const PRESET_SCENARIOS = {
   scenarioC: {
     id:      "SCN-INJECTION-041",
     key:     "scenarioC",
-    name:    "🛡️ Scenario C — Injection Attack",
+    name:    "🛡� Scenario C — Injection Attack",
     tag:     "Jailbreak Neutralized · CASE-041",
     badge:   "PROMPT_INJECTION",
     color:   "amber",

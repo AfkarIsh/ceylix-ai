@@ -80,8 +80,14 @@ def run_experiment(
     print(f"Mode: {'Hermetic Simulation' if force_simulation else 'Live API / Hybrid'}")
     print("=" * 80)
 
+    if force_simulation:
+        from backend.tests.test_workflows_and_metrics import _mock_llm_for_tests
+        import backend.app.workflows as wf
+        wf.call_gemini_api = _mock_llm_for_tests
+
     # 1. Run Workflow A (Baseline)
     print("\n[Phase 1/2] Running Workflow A (Gemini without validation layer)...")
+
     baseline_reports: List[InvestigationReport] = []
     start_time_a = time.time()
     for idx, case in enumerate(cases, 1):

@@ -33,6 +33,7 @@ except ImportError:
     pass
 
 import json
+import re
 from typing import List, Dict, Any, Optional
 from fastapi import FastAPI, HTTPException, Query, Header, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -51,6 +52,7 @@ try:
     )
     from backend.app.rules import run_all_deterministic_rules
     from backend.app.evidence_validator import perform_deterministic_validation
+    from backend.app.anomaly_detector import detect_transaction_anomalies
 except ModuleNotFoundError:
     from app.schemas import (
         InvestigationCase,
@@ -64,6 +66,8 @@ except ModuleNotFoundError:
     )
     from app.rules import run_all_deterministic_rules
     from app.evidence_validator import perform_deterministic_validation
+    from app.anomaly_detector import detect_transaction_anomalies
+
 
 app = FastAPI(
     title="Ceylix AI - Evidence-Grounded Transaction Risk Assistant",
@@ -83,6 +87,14 @@ app.add_middleware(
 class ValidateClaimsRequest(BaseModel):
     case: InvestigationCase
     claims: List[Claim]
+
+
+_BENCHMARK_CASE_ID_PATTERN = re.compile(r"^CASE-\d{3}$", re.IGNORECASE)
+
+
+def _is_explicit_benchmark_case_id(case_id: str) -> bool:
+    """Return true only for canonical IDs used by the preset benchmark scenarios."""
+    return bool(_BENCHMARK_CASE_ID_PATTERN.fullmatch(case_id.strip()))
 
 
 @app.get("/health")
@@ -125,6 +137,8 @@ def investigate_validated(
 ):
     """Workflow B: Live production pipeline executing deterministic rules, live Gemini, evidence validation, and governance abstention."""
     try:
+        # The investigation endpoint evaluates the posted case as-is. In particular,
+        # do not resolve custom/generated IDs through the benchmark repository.
         report = run_validated_workflow(
             case,
             custom_api_key=x_custom_gemini_key or None,
@@ -141,6 +155,17 @@ def investigate_validated(
 def evaluate_rules(case: InvestigationCase):
     """Run all transparent deterministic risk rules over the case."""
     return run_all_deterministic_rules(case)
+
+
+@app.post("/api/anomaly/evaluate")
+def evaluate_anomaly_endpoint(case: InvestigationCase):
+    """
+    Independent novel-threat multivariate statistical anomaly detection.
+    Evaluated independently of deterministic compliance rules.
+    """
+    result = detect_transaction_anomalies(case)
+    return result.model_dump()
+
 
 
 @app.post("/api/claims/validate")
@@ -163,9 +188,13 @@ def validate_claims_endpoint(req: ValidateClaimsRequest):
 @app.get("/api/v1/cases")
 def list_benchmark_cases():
     """List benchmark test cases from research/data/cases.json."""
-    cases_path = os.path.join("research", "data", "cases.json")
-    if not os.path.exists(cases_path):
-        return {"cases": [], "message": "Benchmark dataset not yet generated."}
+    cases_path = _repo_root / "research" / "data" / "cases.json"
+    if not cases_path.exists():
+        fallback_path = Path("research") / "data" / "cases.json"
+        if fallback_path.exists():
+            cases_path = fallback_path
+        else:
+            return {"cases": [], "message": "Benchmark dataset not yet generated."}
     with open(cases_path, "r", encoding="utf-8") as f:
         cases = json.load(f)
     return {
@@ -190,9 +219,18 @@ def list_benchmark_cases():
 @app.get("/api/v1/cases/{case_id}")
 def get_benchmark_case(case_id: str):
     """Retrieve full model input payload for a specific benchmark case."""
-    cases_path = os.path.join("research", "data", "cases.json")
-    if not os.path.exists(cases_path):
-        raise HTTPException(status_code=404, detail="Benchmark dataset not found.")
+    if not _is_explicit_benchmark_case_id(case_id):
+        raise HTTPException(
+            status_code=404,
+            detail="Only explicit benchmark case IDs can load fixture data.",
+        )
+    cases_path = _repo_root / "research" / "data" / "cases.json"
+    if not cases_path.exists():
+        fallback_path = Path("research") / "data" / "cases.json"
+        if fallback_path.exists():
+            cases_path = fallback_path
+        else:
+            raise HTTPException(status_code=404, detail="Benchmark dataset not found.")
     with open(cases_path, "r", encoding="utf-8") as f:
         cases = json.load(f)
     for c in cases:

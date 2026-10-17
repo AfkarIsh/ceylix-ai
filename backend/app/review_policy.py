@@ -60,11 +60,20 @@ def evaluate_review_policy(
             f"UNSUPPORTED_CLAIMS_DETECTED:{validation_report.unsupported_claims_count}_CLAIMS"
         )
 
-    # 6. High Severity Deterministic Rule Flags on Incomplete Data
+    # 6. Sanctions hits and Sanctioned Jurisdiction Corridors require mandatory human review
+    critical_sanctions_flags = [
+        r for r in rule_results
+        if r.flagged and (r.rule_name in ("SanctionsWatchlistRule", "HighRiskJurisdictionRule") or "Sanctions" in r.rule_name or "Jurisdiction" in r.rule_name)
+    ]
+    if critical_sanctions_flags:
+        abstention_reasons.append("SANCTIONS_OR_JURISDICTION_HOLD")
+        for r in critical_sanctions_flags:
+            abstention_reasons.append(f"RULE_TRIGGERED:{r.rule_name}")
+
+    # General high severity rule flags (e.g. LargeAmountThresholdRule) add warnings for qualified release
     high_severity_flags = [r for r in rule_results if r.flagged and r.severity == "HIGH"]
-    if high_severity_flags:
-        for r in high_severity_flags:
-            warnings.append(f"High risk rule flag: {r.rule_name} - {r.details}")
+    for r in high_severity_flags:
+        warnings.append(f"High risk rule flag: {r.rule_name} - {r.details}")
 
     # Final Decision Calculation
     if abstention_reasons:

@@ -246,3 +246,37 @@ def test_scenario_a_case_051_fast_path_bypass():
     assert report.latency_ms < 50.0
     assert report.claims == []
     assert report.rule_results == []
+
+
+def test_custom_case_id_does_not_use_benchmark_fixture_fields():
+    from backend.app.schemas import Transaction, InvestigationCase
+
+    case = InvestigationCase(
+        case_id="TX-CUSTOM-CASE-021",
+        category="complete_consistent",
+        scenario_name="Manual Triage Payload",
+        transaction=Transaction(
+            transaction_id="TX-CUSTOM-1001",
+            timestamp="2026-10-17T12:00:00Z",
+            account_id="acc-custom",
+            customer_id="cust-custom",
+            amount=142.50,
+            currency="USD",
+            channel="WIRE",
+            counterparty_account="US-CUSTOM-01",
+            counterparty_name="Independent Grocery Retail",
+            counterparty_bank="Community Bank",
+            counterparty_country="US",
+            origin_country="US",
+            destination_country="US",
+            memo="Retail invoice settlement",
+        ),
+        evidence_records=[],
+    )
+
+    report = run_validated_workflow(case)
+
+    assert report.case_id == "TX-CUSTOM-CASE-021"
+    assert report.fast_path_used is True
+    assert report.preliminary_risk_level == "LOW"
+    assert report.decision == "RELEASE_WITH_PROVENANCE"

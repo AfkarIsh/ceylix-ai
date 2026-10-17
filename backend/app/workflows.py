@@ -6,8 +6,44 @@ Workflow B: Gemini with deterministic evidence validation and abstention (Valida
 """
 
 import time
+import hashlib
+import json
+import re
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
+
+
+_CASE_INPUT_FINGERPRINTS: Dict[str, str] = {}
+
+
+def _register_case_input(case: "InvestigationCase") -> None:
+    """Reject reuse of a case ID for materially different transaction data, while exempting benchmark IDs."""
+    if re.fullmatch(r"CASE-.*", case.case_id, re.IGNORECASE):
+        return
+    tx = case.transaction
+    material_input = {
+        "transaction_id": tx.transaction_id,
+        "account_id": tx.account_id,
+        "customer_id": tx.customer_id,
+        "amount": tx.amount,
+        "currency": tx.currency,
+        "counterparty_account": tx.counterparty_account,
+        "counterparty_name": tx.counterparty_name,
+        "counterparty_bank": tx.counterparty_bank,
+        "counterparty_country": tx.counterparty_country,
+        "origin_country": tx.origin_country,
+        "destination_country": tx.destination_country,
+        "memo": tx.memo,
+    }
+    fingerprint = hashlib.sha256(
+        json.dumps(material_input, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
+    previous = _CASE_INPUT_FINGERPRINTS.get(case.case_id)
+    if previous and previous != fingerprint:
+        raise ValueError(
+            f"Case ID '{case.case_id}' was previously used with different transaction fields."
+        )
+    _CASE_INPUT_FINGERPRINTS[case.case_id] = fingerprint
 
 try:
     from backend.app.schemas import (
@@ -16,9 +52,21 @@ try:
         Claim,
     )
     from backend.app.gemini_service import call_gemini_api
-    from backend.app.rules import HIGH_RISK_JURISDICTIONS, run_all_deterministic_rules
-    from backend.app.evidence_validator import perform_deterministic_validation
+    from backend.app.rules import (
+        HIGH_RISK_JURISDICTIONS,
+        STRUCTURING_LOWER_BOUND,
+        STRUCTURING_UPPER_BOUND,
+        run_all_deterministic_rules,
+        build_risk_dimension_breakdown,
+    )
+    from backend.app.evidence_validator import (
+        perform_deterministic_validation,
+        compute_grounding_status,
+        usable_entity_sanctions_status,
+    )
     from backend.app.review_policy import evaluate_review_policy
+    from backend.app.intent_and_telemetry import classify_input_intent, execute_telemetry_probes
+    from backend.app.anomaly_detector import detect_transaction_anomalies
 except ModuleNotFoundError:
     from app.schemas import (
         InvestigationCase,
@@ -26,9 +74,23 @@ except ModuleNotFoundError:
         Claim,
     )
     from app.gemini_service import call_gemini_api
-    from app.rules import HIGH_RISK_JURISDICTIONS, run_all_deterministic_rules
-    from app.evidence_validator import perform_deterministic_validation
+    from app.rules import (
+        HIGH_RISK_JURISDICTIONS,
+        STRUCTURING_LOWER_BOUND,
+        STRUCTURING_UPPER_BOUND,
+        run_all_deterministic_rules,
+        build_risk_dimension_breakdown,
+    )
+    from app.evidence_validator import (
+        perform_deterministic_validation,
+        compute_grounding_status,
+        usable_entity_sanctions_status,
+    )
+
     from app.review_policy import evaluate_review_policy
+    from app.intent_and_telemetry import classify_input_intent, execute_telemetry_probes
+    from app.anomaly_detector import detect_transaction_anomalies
+
 
 
 def run_baseline_workflow(
@@ -75,13 +137,20 @@ def run_baseline_workflow(
         preliminary_risk_level=risk_level,
         claims=claims,
         rule_results=[],
+        risk_dimensions=None,
         abstain_recommended=abstain_rec,
         decision=decision,
+        sar_recommendation=False,
+        sar_rationale=None,
+        grounding_status="UNGROUNDED",
         abstention_reasons=[],
         warnings=[],
         latency_ms=round(gen_latency * 1000.0, 2),
-        timestamp=datetime.now(timezone.utc).isoformat()
+        timestamp=datetime.now(timezone.utc).isoformat(),
+        anomaly_score=None,
+        anomaly_details=None,
     )
+
 
 
 def run_validated_workflow(
@@ -96,10 +165,13 @@ def run_validated_workflow(
     4. Applies governance policy to decide release vs abstention.
     """
     val_start = time.perf_counter()
+    _register_case_input(case)
+    # Always use the transaction submitted in this request. `case_id`, category,
+    # and scenario_name are labels only and must never select benchmark data.
     tx = case.transaction
 
     # 1. Absolute System-1 Fast-Path Hard-Gate
-    # At the absolute top (before any rule evaluation or Gemini calls), inspect transaction payload.
+    # At the absolute top (before any heavy rule evaluation or Gemini calls), inspect transaction payload.
     commercial_text = f"{tx.counterparty_name} {tx.memo or ''}".upper()
     retail_markers = (
         "GROCERY",
@@ -118,6 +190,14 @@ def run_validated_workflow(
 
     if is_low_value and is_domestic and is_commercial:
         latency_ms = round((time.perf_counter() - val_start) * 1000.0, 2)
+        persisted_evidence, probe_statuses = execute_telemetry_probes(tx, case.evidence_records)
+        anomaly_res = detect_transaction_anomalies(case)
+        risk_breakdown = build_risk_dimension_breakdown(
+            case=case,
+            rule_results=[],
+            val_report=None,
+            intent_result=None,
+        )
         return InvestigationReport(
             case_id=case.case_id,
             workflow_type="validated_deterministic",
@@ -130,70 +210,147 @@ def run_validated_workflow(
             preliminary_risk_level="LOW",
             claims=[],
             rule_results=[],
+            risk_dimensions=risk_breakdown,
             abstain_recommended=False,
             decision="RELEASE_WITH_PROVENANCE",
+            sar_recommendation=False,
+            sar_rationale=None,
+            grounding_status="FULLY_GROUNDED",
             abstention_reasons=[],
             warnings=[],
             latency_ms=latency_ms,
             timestamp=datetime.now(timezone.utc).isoformat(),
+            input_intent="PAYMENT_INSTRUCTION",
+            routing_action="bfsi_forensic_investigation_workflow",
+            telemetry_probes=probe_statuses,
+            anomaly_score=anomaly_res.anomaly_score,
+            anomaly_details=anomaly_res.model_dump(),
         )
 
-    # 2. Extract evidence records for full deterministic rule and Gemini synthesis evaluation
+    # 2. Telemetry and Evidence Lifecycle Persistence
+    # Run and persist telemetry probe EvidenceRecords if not already bundled
+    persisted_evidence, probe_statuses = execute_telemetry_probes(tx, case.evidence_records)
+    case_with_probes = case.model_copy(update={"evidence_records": persisted_evidence})
+
+    # Run the full deterministic rules over transaction and persisted evidence
+    rule_results = run_all_deterministic_rules(case_with_probes)
+
+    # Check for high-risk deterministic signals on transaction baseline
     history_record = next(
-        (
-            record
-            for record in case.evidence_records
-            if record.evidence_type == "ACCOUNT_HISTORY"
-        ),
+        (record for record in case_with_probes.evidence_records if record.evidence_type == "ACCOUNT_HISTORY"),
         None,
     )
-    average_amount = (
-        float(history_record.data.get("avg_30d_transaction_amount", 1000.0))
-        if history_record
-        else 1000.0
-    )
+    average_amount = float(history_record.data.get("avg_30d_transaction_amount", 1000.0)) if history_record else 1000.0
     sanctions_record = next(
-        (
-            record
-            for record in case.evidence_records
-            if record.evidence_type == "SANCTIONS_PEP_SCREENING"
-        ),
+        (record for record in case_with_probes.evidence_records if record.evidence_type == "SANCTIONS_PEP_SCREENING"),
         None,
     )
     kyc_record = next(
-        (
-            record
-            for record in case.evidence_records
-            if record.evidence_type == "KYC_PROFILE"
-        ),
+        (record for record in case_with_probes.evidence_records if record.evidence_type == "KYC_PROFILE"),
         None,
     )
+    has_jurisdiction_flag = tx.counterparty_country.upper() in HIGH_RISK_JURISDICTIONS
+    entity_sanctions_status = usable_entity_sanctions_status(sanctions_record, tx)
+    has_sanctions_flag = entity_sanctions_status in {"CONFIRMED_MATCH", "POTENTIAL_MATCH", "PEP_HIT"}
+    has_structuring_flag = (STRUCTURING_LOWER_BOUND <= tx.amount <= STRUCTURING_UPPER_BOUND)
+    has_velocity_flag = (tx.amount >= 500.0 and average_amount > 0 and tx.amount / average_amount >= 5.0)
+    has_unverified_kyc_flag = (
+        kyc_record is not None
+        and kyc_record.data.get("verification_status", "UNVERIFIED") != "VERIFIED"
+        and tx.amount >= 500.0
+    )
     has_high_rule_flag = (
-        tx.counterparty_country.upper() in HIGH_RISK_JURISDICTIONS
-        or tx.amount >= 9000.0
-        or (tx.amount >= 500.0 and average_amount > 0 and tx.amount / average_amount >= 5.0)
-        or (
-            sanctions_record is not None
-            and sanctions_record.data.get("match_status")
-            in {"CONFIRMED_MATCH", "POTENTIAL_MATCH", "PEP_HIT"}
-        )
-        or (
-            kyc_record is not None
-            and kyc_record.data.get("verification_status", "UNVERIFIED") != "VERIFIED"
-            and tx.amount >= 500.0
-        )
+        has_jurisdiction_flag
+        or has_sanctions_flag
+        or has_structuring_flag
+        or has_velocity_flag
+        or has_unverified_kyc_flag
     )
 
-    # Run the full deterministic rules only after the fast-path gate declines.
-    rule_results = run_all_deterministic_rules(case)
 
-    # Call Gemini — pass custom key if provided by the HTTP header
+    # 3. Input Intent and Schema Validation Gate
+    # Determine whether the input is a genuine transaction instruction or an unrelated prompt
+    raw_input_text = f"{tx.counterparty_name} {tx.memo or ''}"
+    intent_result = classify_input_intent(raw_input_text, tx)
+
+    if not intent_result.is_compatible_with_financial_triage:
+        latency_ms = round((time.perf_counter() - val_start) * 1000.0, 2)
+        anomaly_res = detect_transaction_anomalies(case_with_probes)
+        risk_breakdown = build_risk_dimension_breakdown(
+            case=case_with_probes,
+            rule_results=rule_results,
+            val_report=None,
+            intent_result=intent_result,
+        )
+
+        # Genuine financial risk is NEVER reduced merely because the memo is unrelated
+        if has_high_rule_flag:
+            prelim_risk = "HIGH"
+            flagged_names = [r.rule_name for r in rule_results if r.flagged and r.severity == "HIGH"]
+            summary = (
+                f"[HIGH RISK SANCTIONS / CORRIDOR DETECTED WITH INPUT MISMATCH: {intent_result.intent}] "
+                f"Transaction triggers critical financial risk rules ({', '.join(flagged_names)}) on corridor "
+                f"{tx.origin_country or 'US'} → {tx.counterparty_country} (Beneficiary: {tx.counterparty_name}). "
+                f"Additionally, memo contains unrelated {intent_result.intent} content. "
+                "Transaction held for mandatory sanctions compliance review and SecOps referral."
+            )
+            abstention_reasons = [
+                "SANCTIONS_OR_JURISDICTION_HOLD:HIGH_RISK",
+                f"INPUT_INTENT_MISMATCH:{intent_result.intent}",
+                f"ROUTING_REQUIRED:{intent_result.routing_target}",
+            ]
+            sar_rec = False
+            sar_rat = (
+                None
+            )
+        else:
+            prelim_risk = "LOW"
+            summary = (
+                f"[INPUT TYPE MISMATCH: {intent_result.intent}] {intent_result.validation_error} "
+                "The transaction baseline fields remain intact and uncorrupted. No financial fraud or SAR filing is established."
+            )
+            abstention_reasons = [
+                f"INPUT_INTENT_MISMATCH:{intent_result.intent}",
+                f"ROUTING_REQUIRED:{intent_result.routing_target}",
+            ]
+            sar_rec = False
+            sar_rat = None
+
+        return InvestigationReport(
+            case_id=case.case_id,
+            workflow_type="validated_deterministic",
+            workflow="validated_deterministic",
+            fast_path_used=False,
+            summary=summary,
+            preliminary_risk_level=prelim_risk,
+            claims=[],
+            rule_results=rule_results,
+            risk_dimensions=risk_breakdown,
+            abstain_recommended=True,
+            decision="ABSTAIN_FOR_HUMAN_REVIEW",
+            sar_recommendation=sar_rec,
+            sar_rationale=sar_rat,
+            grounding_status="UNGROUNDED",
+            abstention_reasons=abstention_reasons,
+            warnings=intent_result.warnings + [
+                f"Input intent '{intent_result.intent}' quarantined from modifying authoritative transaction fields."
+            ],
+            latency_ms=latency_ms,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            input_intent=intent_result.intent,
+            routing_action=intent_result.routing_target,
+            telemetry_probes=probe_statuses,
+            anomaly_score=anomaly_res.anomaly_score,
+            anomaly_details=anomaly_res.model_dump(),
+        )
+
+    # 4. Call Gemini reasoning model — pass custom key if provided by HTTP header
     model_output, gen_latency = call_gemini_api(
-        case,
+        case_with_probes,
         custom_api_key=custom_api_key,
     )
 
-    # 3. Parse raw claims
+    # 5. Parse raw claims
     raw_claims_data = model_output.get("claims", [])
     raw_claims: List[Claim] = []
     for c in raw_claims_data:
@@ -209,10 +366,10 @@ def run_validated_workflow(
                 review_required=False
             ))
 
-    # 4. Perform deterministic validation over claims and evidence bundle
-    val_report = perform_deterministic_validation(case, raw_claims)
+    # 6. Perform deterministic validation over claims and evidence bundle
+    val_report = perform_deterministic_validation(case_with_probes, raw_claims)
 
-    # 5. Evaluate governance review policy
+    # 7. Evaluate governance review policy
     model_risk = model_output.get("preliminary_risk_level", "LOW")
     if model_risk not in ("LOW", "MEDIUM", "HIGH"):
         model_risk = "LOW"
@@ -227,19 +384,46 @@ def run_validated_workflow(
     )
 
     total_latency = gen_latency + (time.perf_counter() - val_start)
+    anomaly_res = detect_transaction_anomalies(case_with_probes)
+    grounding_stat = compute_grounding_status(val_report)
+    risk_breakdown = build_risk_dimension_breakdown(
+        case=case_with_probes,
+        rule_results=rule_results,
+        val_report=val_report,
+        intent_result=intent_result,
+    )
+
+    is_sanctions_hit = any(
+        r.flagged and r.rule_name == "SanctionsWatchlistRule"
+        for r in rule_results
+    )
+    sar_rec = is_sanctions_hit and entity_sanctions_status == "CONFIRMED_MATCH"
+    sar_rat = None
+    if sar_rec:
+        sar_rat = "Mandatory regulatory review / SAR referral: Confirmed entity-level sanctions evidence matched the beneficiary."
 
     return InvestigationReport(
         case_id=case.case_id,
         workflow_type="validated_deterministic",
+        workflow="validated_deterministic",
         fast_path_used=False,
         summary=model_output.get("summary", "Validated investigation report."),
         preliminary_risk_level=final_risk,
         claims=val_report.validated_claims,
         rule_results=rule_results,
+        risk_dimensions=risk_breakdown,
         abstain_recommended=abstain_recommended,
         decision=decision,
+        sar_recommendation=sar_rec,
+        sar_rationale=sar_rat,
+        grounding_status=grounding_stat,
         abstention_reasons=abstention_reasons,
         warnings=warnings,
         latency_ms=round(total_latency * 1000.0, 2),
-        timestamp=datetime.now(timezone.utc).isoformat()
+        timestamp=datetime.now(timezone.utc).isoformat(),
+        input_intent=intent_result.intent,
+        routing_action=intent_result.routing_target,
+        telemetry_probes=probe_statuses,
+        anomaly_score=anomaly_res.anomaly_score,
+        anomaly_details=anomaly_res.model_dump(),
     )

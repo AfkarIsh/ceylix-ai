@@ -34,7 +34,7 @@ import { DISPOSITION } from '../types.js';
 // ─────────────────────────────────────────────────────────────────────────────
 // Disposition header card — colour varies by disposition type
 // ─────────────────────────────────────────────────────────────────────────────
-function DispositionHeader({ disposition, isInvestigating }) {
+function DispositionHeader({ disposition, isInvestigating, sarRecommendation, sarRationale }) {
   if (isInvestigating) {
     return (
       <div className="p-3.5 rounded-lg border bg-cyan-950/30 border-cyan-700/60 text-cyan-300 animate-pulse">
@@ -102,18 +102,47 @@ function DispositionHeader({ disposition, isInvestigating }) {
     );
   }
 
-  // ESCALATE_FOR_ANALYST_REVIEW
+  if (disposition === DISPOSITION.INPUT_MISMATCH) {
+    return (
+      <div className="p-3.5 rounded-lg border bg-amber-950/40 border-amber-700/80 text-amber-300 animate-fade-in">
+        <div className="text-[10px] uppercase font-bold tracking-widest opacity-70 mb-1">
+          Final Disposition Decision
+        </div>
+        <div className="text-sm font-bold font-mono tracking-wide flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />
+          {disposition}
+        </div>
+        <div className="text-[10px] text-amber-400/80 mt-1">
+          Analyst Review Required · Non-payment instruction content detected · Suspicious financial activity not established
+        </div>
+      </div>
+    );
+  }
+
+  // ESCALATE_FOR_ANALYST_REVIEW / Standard Analyst Review
+  const isSarRecommended = Boolean(sarRecommendation);
   return (
     <div className="p-3.5 rounded-lg border bg-rose-950/40 border-rose-800/80 text-rose-300 animate-fade-in">
-      <div className="text-[10px] uppercase font-bold tracking-widest opacity-70 mb-1">
-        Final Disposition Decision
+      <div className="flex items-center justify-between mb-1">
+        <div className="text-[10px] uppercase font-bold tracking-widest opacity-70">
+          Final Disposition Decision
+        </div>
+        <span className={`text-[9px] font-mono px-2 py-0.5 rounded font-bold uppercase tracking-wider ${
+          isSarRecommended
+            ? "bg-rose-900/60 text-rose-200 border border-rose-600/60"
+            : "bg-slate-800 text-slate-300 border border-slate-700"
+        }`}>
+          {isSarRecommended ? "SAR Referral: Recommended" : "SAR Referral: Not Established"}
+        </span>
       </div>
       <div className="text-sm font-bold font-mono tracking-wide flex items-center gap-2">
         <ShieldAlert className="w-4 h-4 text-rose-400 flex-shrink-0" />
         {disposition}
       </div>
-      <div className="text-[10px] text-rose-400/70 mt-1">
-        SAR filing recommended · Senior analyst review within 24-hour window
+      <div className="text-[10px] text-rose-400/80 mt-1">
+        {isSarRecommended
+          ? (sarRationale || "Mandatory compliance hold: Validated sanctions hit or structuring pattern identified.")
+          : "Operational analyst review required before clearance. Suspicious financial crime not established on recorded baseline."}
       </div>
     </div>
   );
@@ -259,7 +288,12 @@ export default function DossierPanel({
       <div className="mt-4 space-y-3.5 flex-1 overflow-y-auto max-h-[640px] pr-0.5">
 
         {/* Disposition Header */}
-        <DispositionHeader disposition={disposition} isInvestigating={isInvestigating} />
+        <DispositionHeader
+          disposition={disposition}
+          isInvestigating={isInvestigating}
+          sarRecommendation={result?.sar_recommendation}
+          sarRationale={result?.sar_rationale}
+        />
 
         {/* Injection Alert Banner for Scenario C */}
         {isInjectionScenario && disposition === DISPOSITION.EMERGENCY && (
@@ -296,14 +330,102 @@ export default function DossierPanel({
             </div>
           </div>
           {narrativeExpanded && (
-            <p className={`text-[11px] leading-relaxed animate-fade-in ${isInvestigating ? 'text-slate-500 italic' : 'text-slate-300'}`}>
-              {summary}
-            </p>
+            <div className="space-y-2 mt-1">
+              <p className={`text-[11px] leading-relaxed animate-fade-in ${isInvestigating ? 'text-slate-500 italic' : 'text-slate-300'}`}>
+                {summary}
+              </p>
+
+              {/* Structured Regulatory Indicators */}
+              {!isInvestigating && result && (
+                <div className="mt-2.5 pt-2 border-t border-slate-800/80 space-y-2">
+                  {/* 1. Factual Indicators */}
+                  <div className="text-[10px] bg-slate-900/60 p-2 rounded border border-slate-800/60">
+                    <span className="font-bold text-slate-400 uppercase tracking-wide block mb-0.5">
+                      Factual Indicators:
+                    </span>
+                    <span className="text-slate-300">
+                      Amount: {payload?.currency || 'USD'} {Number(payload?.amount || 0).toLocaleString()} · Corridor: {payload?.origin_country || 'US'} → {payload?.counterparty_country || payload?.destination_country || 'US'} · Beneficiary: {payload?.counterparty_name || 'N/A'} · Settlement Bank: {payload?.counterparty_bank || 'N/A'}
+                    </span>
+                  </div>
+
+                  {/* 2. Unresolved Questions */}
+                  {(result.warnings?.length > 0 || result.probes?.ip_geo?.status === 'MATCHED' || (result.input_intent && result.input_intent !== 'PAYMENT_INSTRUCTION')) && (
+                    <div className="text-[10px] bg-amber-950/20 p-2 rounded border border-amber-900/40">
+                      <span className="font-bold text-amber-400 uppercase tracking-wide block mb-0.5">
+                        Unresolved Questions:
+                      </span>
+                      <ul className="list-disc list-inside text-amber-200/80 space-y-0.5">
+                        {result.probes?.ip_geo?.status === 'MATCHED' && (
+                          <li>Proxy/VPN routing detected on client IP — physical geolocation obscured.</li>
+                        )}
+                        {result.input_intent && result.input_intent !== 'PAYMENT_INSTRUCTION' && (
+                          <li>Payment memo contains unrelated non-financial text ({result.input_intent}) requiring verification.</li>
+                        )}
+                        {result.warnings?.map((w, idx) => (
+                          <li key={idx}>{w}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* 3. Reason for Analyst Review */}
+                  {result.decision === 'ABSTAIN_FOR_HUMAN_REVIEW' && (
+                    <div className="text-[10px] bg-cyan-950/20 p-2 rounded border border-cyan-900/40">
+                      <span className="font-bold text-cyan-400 uppercase tracking-wide block mb-0.5">
+                        Reason for Analyst Review:
+                      </span>
+                      <span className="text-cyan-200/90">
+                        {result.preliminary_risk_level === 'HIGH'
+                          ? 'Mandatory sanctions & high-risk corridor review required before transaction release. Input mismatch quarantined.'
+                          : 'Automated clearance withheld: non-payment instructions detected in memo. Refer to specialized operational workflow.'}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           )}
         </div>
 
+        {/* Novel-Threat Multivariate Anomaly Indicator (Phase 8) */}
+        {!isInvestigating && result && result.anomaly_score != null && (
+          <div className="p-3.5 bg-slate-950/80 rounded-lg border border-slate-800 text-slate-300 animate-fade-in">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400">
+                Novel-Threat Multivariate Anomaly Indicator
+              </span>
+              <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded ${
+                result.anomaly_score >= 0.65
+                  ? "bg-amber-950/60 text-amber-300 border border-amber-700/60"
+                  : "bg-slate-900 text-emerald-400 border border-emerald-800/60"
+              }`}>
+                Anomaly: {(result.anomaly_score * 100).toFixed(1)}/100
+              </span>
+            </div>
+            <p className="text-[10px] text-slate-400 leading-relaxed">
+              {result.anomaly_details?.explanation || (result.anomaly_score >= 0.65 ? "Statistical outlier detected relative to multidimensional customer baseline." : "Transaction conforms to expected multidimensional baseline.")}
+            </p>
+            {result.anomaly_details?.feature_contributions && (
+              <div className="mt-2 grid grid-cols-2 gap-1.5 text-[9px] font-mono">
+                {Object.entries(result.anomaly_details.feature_contributions).map(([feat, score]) => (
+                  <div key={feat} className="bg-slate-900/80 px-2 py-1 rounded border border-slate-800 flex justify-between">
+                    <span className="text-slate-400">{feat.replace('_', ' ')}</span>
+                    <span className={score >= 0.5 ? "text-amber-400 font-bold" : "text-slate-300"}>
+                      {(score * 100).toFixed(0)}%
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="text-[9px] text-slate-500 italic mt-1.5 border-t border-slate-800/60 pt-1">
+              Notice: Independent anomaly score measures statistical distance; does not independently trigger a SAR.
+            </div>
+          </div>
+        )}
+
         {/* Verified Evidence Bindings */}
         <div className="p-3.5 bg-slate-950/80 rounded-lg border border-slate-800">
+
           <div className="flex items-center gap-2 text-[10px] uppercase font-semibold text-slate-500 tracking-wider mb-2.5">
             {isInvestigating ? (
               <Loader2 className="w-3.5 h-3.5 text-cyan-400 animate-spin" />

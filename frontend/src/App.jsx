@@ -493,12 +493,14 @@ function AppContent() {
         ...(customApiKey ? { "X-Custom-Gemini-Key": customApiKey } : {}),
       };
 
+      let serverResponseReceived = false;
       const res = await fetch(`${BACKEND_URL}${API.INVESTIGATE_LIVE}`, {
         method: "POST",
         headers: requestHeaders,
         body: JSON.stringify(investigationCase),
         signal,
       });
+      serverResponseReceived = true;
 
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}));
@@ -519,44 +521,50 @@ function AppContent() {
       if (signal.aborted) return;
 
       console.error("[Ceylix] Live backend request failed:", err);
-      setBackendStatus(BACKEND_STATUS.DISCONNECTED);
+      if (!serverResponseReceived) {
+        setBackendStatus(BACKEND_STATUS.DISCONNECTED);
+        showErrorBanner(
+          `[ERROR: Backend Service Unreachable. Please verify Uvicorn server is running on port 8000] (${err.message})`
+        );
+      } else {
+        setBackendStatus(BACKEND_STATUS.CONNECTED);
+        showErrorBanner(
+          `[ERROR: Backend Investigation Error] ${err.message}`
+        );
+      }
       finalResult = {
         workflow_type: "validated_deterministic",
         preliminary_risk_level: "HIGH",
         calibrated_score: 94,
         system1_disposition: "DISPATCH_INVESTIGATION",
         system1_model: "Gemini 2.5 Flash",
-        system2_model: "Unavailable — backend request failed",
+        system2_model: serverResponseReceived ? "Execution Halted" : "Unavailable — backend request failed",
         grounding_status: "DATA_UNAVAILABLE",
         decision: "ABSTAIN_FOR_HUMAN_REVIEW",
         disposition_title: "ESCALATE_FOR_ANALYST_REVIEW",
-        summary: "Investigation could not be completed because the backend request failed.",
+        summary: `Investigation could not be completed: ${err.message}`,
         error_message: err.message || "Unknown backend error",
         claims: [],
         quarantined_claims: [],
         probes: {
           ofac_sdn: {
             status: "DATA_UNAVAILABLE",
-            detail: "Backend unavailable; OFAC result could not be verified.",
+            detail: "OFAC result could not be verified.",
             verified: false,
           },
           ip_geo: {
             status: "DATA_UNAVAILABLE",
-            detail: "Backend unavailable; IP geolocation could not be verified.",
+            detail: "IP geolocation could not be verified.",
             verified: false,
           },
           core_kyc: {
             status: "DATA_UNAVAILABLE",
-            detail: "Backend unavailable; KYC result could not be verified.",
+            detail: "KYC result could not be verified.",
             verified: false,
           },
         },
       };
       setInvestigationResult(finalResult);
-
-      showErrorBanner(
-        `[ERROR: Backend Service Unreachable. Please verify Uvicorn server is running on port 8000] (${err.message})`
-      );
 
     } finally {
       setIsInvestigating(false);
