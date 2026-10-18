@@ -53,7 +53,10 @@ def screening_record(case, *, status, name=None, list_id="OFAC-SDN-TEST-1"):
 def test_domestic_grocery_has_no_entity_sanctions_match():
     case = make_case("INTEGRITY-A", name="Neighborhood Grocery")
     report = run_validated_workflow(case)
-    assert report.decision == "RELEASE_WITH_PROVENANCE"
+    # Unknown sanctions status is not proof of clearance: missing mandatory
+    # screening evidence must keep the case in human review.
+    assert report.decision == "ABSTAIN_FOR_HUMAN_REVIEW"
+    assert report.fast_path_used is False
     assert report.risk_dimensions.sanctions_watchlist_risk["status"] == "UNKNOWN"
     assert report.risk_dimensions.sanctions_watchlist_risk["is_high_risk_jurisdiction"] is False
 
