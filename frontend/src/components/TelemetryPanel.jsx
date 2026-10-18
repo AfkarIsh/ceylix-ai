@@ -131,6 +131,36 @@ export function GeminiPillBar({
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
   const [isPresetDropdownOpen, setIsPresetDropdownOpen] = useState(false);
   const inputRef = useRef(null);
+  const presetMenuRef = useRef(null);
+  const modelMenuRef = useRef(null);
+
+  useEffect(() => {
+    if (!isPresetDropdownOpen && !isModelDropdownOpen) return undefined;
+
+    const handlePointerDown = (event) => {
+      const target = event.target;
+      if (isPresetDropdownOpen && !presetMenuRef.current?.contains(target)) {
+        setIsPresetDropdownOpen(false);
+      }
+      if (isModelDropdownOpen && !modelMenuRef.current?.contains(target)) {
+        setIsModelDropdownOpen(false);
+      }
+    };
+
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        setIsPresetDropdownOpen(false);
+        setIsModelDropdownOpen(false);
+      }
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isPresetDropdownOpen, isModelDropdownOpen]);
 
   const activeModelObj = useMemo(
     () => AVAILABLE_MODELS.find((m) => m.id === selectedModel) || AVAILABLE_MODELS[0],
@@ -201,9 +231,11 @@ export function GeminiPillBar({
         )}
 
         {/* Left: Quick Attach / Preset (+) Button */}
-        <div className="relative flex-shrink-0">
+        <div ref={presetMenuRef} className="relative flex-shrink-0">
           <button
             type="button"
+            aria-haspopup="menu"
+            aria-expanded={isPresetDropdownOpen}
             onClick={() => {
               setIsPresetDropdownOpen(!isPresetDropdownOpen);
               setIsModelDropdownOpen(false);
@@ -219,7 +251,7 @@ export function GeminiPillBar({
 
           {/* Preset Popover Menu */}
           {isPresetDropdownOpen && (
-            <div className="absolute left-0 bottom-full mb-2 w-72 bg-slate-900/95 border border-slate-700 rounded-2xl shadow-2xl p-2 z-50 text-left backdrop-blur-xl">
+            <div role="menu" className="absolute left-0 bottom-full mb-2 w-72 max-w-[calc(100vw-2rem)] bg-slate-900/95 border border-slate-700 rounded-2xl shadow-2xl p-2 z-50 text-left backdrop-blur-xl">
               <div className="text-[10px] uppercase font-bold text-slate-400 px-3 py-1.5 tracking-wider">
                 Benchmark Scenario Presets
               </div>
@@ -286,9 +318,11 @@ export function GeminiPillBar({
         )}
 
         {/* Right: Model Selector Pill */}
-        <div className="relative flex-shrink-0">
+        <div ref={modelMenuRef} className="relative flex-shrink-0">
           <button
             type="button"
+            aria-haspopup="menu"
+            aria-expanded={isModelDropdownOpen}
             onClick={() => {
               setIsModelDropdownOpen(!isModelDropdownOpen);
               setIsPresetDropdownOpen(false);
@@ -307,7 +341,7 @@ export function GeminiPillBar({
 
           {/* Model Dropdown Menu */}
           {isModelDropdownOpen && (
-            <div className="absolute right-0 bottom-full mb-2 w-64 bg-slate-900/95 border border-slate-700 rounded-2xl shadow-2xl p-1.5 z-50 text-left backdrop-blur-xl">
+            <div role="menu" className="absolute right-0 bottom-full mb-2 w-64 max-w-[calc(100vw-2rem)] bg-slate-900/95 border border-slate-700 rounded-2xl shadow-2xl p-1.5 z-50 text-left backdrop-blur-xl">
               <div className="text-[10px] uppercase font-bold text-slate-400 px-2.5 py-1 tracking-wider">
                 Gemini Cognitive Tiers
               </div>
@@ -567,7 +601,7 @@ export default function TelemetryPanel({
   };
 
   return (
-    <section className="bg-slate-900/40 border border-slate-800/80 rounded-xl p-4 sm:p-5 flex flex-col justify-between shadow-xl relative overflow-hidden backdrop-blur-sm space-y-4">
+    <section className="min-w-0 w-full bg-slate-900/40 border border-slate-800/80 rounded-xl p-4 sm:p-5 flex flex-col justify-between shadow-xl relative overflow-hidden backdrop-blur-sm space-y-4">
       {/* ── Top Header with New Case reset button ──────────────────── */}
       <div className="flex items-center justify-between pb-3 border-b border-slate-800/80">
         <div className="flex items-center gap-2">
