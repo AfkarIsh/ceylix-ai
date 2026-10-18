@@ -642,14 +642,23 @@ function AppContent() {
   const handleSelectScenario = useCallback((key) => {
     const scn = PRESET_SCENARIOS[key];
     if (!scn) return;
+
+    // Evidence records are stored alongside each preset's transaction payload,
+    // not inside `scn.payload`. Carry them into the request so the backend's
+    // mandatory screening gate receives the evidence the preset documents.
+    const scenarioPayload = {
+      ...scn.payload,
+      evidence_records: scn.evidence_records || [],
+    };
+
     setSelectedScenarioKey(key);
-    setActivePayload({ ...scn.payload });
+    setActivePayload(scenarioPayload);
     setActiveCaseId(scn.case_id);
     setIsEditingPayload(false);
     setFirestoreSyncState(SYNC_STATE.IDLE);
     setFirestoreSyncTs(null);
     setHasStartedInvestigation(true);
-    handleRunTriage(scn.payload, scn.case_id, key);
+    handleRunTriage(scenarioPayload, scn.case_id, key);
   }, [handleRunTriage]);
 
   // ── Payload field change ─────────────────────────────────────────────────
@@ -803,7 +812,7 @@ function AppContent() {
       />
 
       {/* Main Area: Gemini Hero Landing vs 3-Panel Compliance Workbench */}
-      <main className="flex-1 max-w-[1400px] w-full mx-auto p-4 sm:p-5">
+      <main className="flex-1 min-w-0 max-w-[1400px] w-full mx-auto p-3 sm:p-5">
         {!hasStartedInvestigation ? (
           <GeminiHeroView
             onRunTriage={handleRunTriage}
@@ -816,7 +825,7 @@ function AppContent() {
             resetKey={workspaceResetKey}
           />
         ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+          <div className="grid grid-cols-1 min-w-0 lg:grid-cols-3 gap-5">
             {/* Panel 1: Universal Telemetry Ingestion & Sensitivity */}
             <TelemetryPanel
               payload={activePayload}
@@ -881,11 +890,11 @@ function AppContent() {
 
       {/* Footer — persistent live API indicator */}
       <footer className="border-t border-slate-800/80 bg-slate-950 px-6 py-3 text-center text-[11px] text-slate-600">
-        <div className="max-w-[1400px] mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
+        <div className="max-w-[1400px] min-w-0 mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
           <div className="font-mono">
             Ceylix AI Incident Workbench · Evidence-Grounded BFSI Risk Investigation
           </div>
-          <div className="flex items-center gap-4 font-mono text-[10px]">
+          <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-4 font-mono text-[10px]">
             <span className="flex items-center gap-1.5">
               <span className="text-emerald-400 font-semibold">🟢 Live API Pipeline</span>
               <span className="text-slate-600">(FastAPI + Google Gemini)</span>
