@@ -18,7 +18,7 @@
     color: #f1f5f9;             /* slate-100 */
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    overflow-x: hidden;
+    overflow-x: clip;
   }
 
   ::selection {
@@ -133,4 +133,34 @@
 code, .font-mono, [class*="font-mono"] {
   font-family: 'JetBrains Mono', 'Fira Code', ui-monospace,
     SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+
+/* Keep application shells and grid children shrinkable on narrow viewports. */
+html, body, #root {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+#root {
+  overflow-x: clip;
+}
+
+img, svg, video, canvas {
+  max-width: 100%;
+}
+
+@media (max-width: 480px) {
+  header {
+    max-width: 100%;
+  }
+
+  main {
+    min-width: 0;
+  }
+
+  input, textarea, select {
+    max-width: 100%;
+  }
 }
