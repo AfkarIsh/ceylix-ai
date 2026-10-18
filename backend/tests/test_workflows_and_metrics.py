@@ -211,7 +211,7 @@ def test_metrics_computation(monkeypatch):
 
 
 def test_scenario_a_case_051_fast_path_bypass():
-    from backend.app.schemas import Transaction, InvestigationCase
+    from backend.app.schemas import Transaction, InvestigationCase, EvidenceRecord
     tx = Transaction(
         transaction_id="TX-051-WIRE-7741",
         timestamp="2026-10-16T09:14:22Z",
@@ -235,7 +235,17 @@ def test_scenario_a_case_051_fast_path_bypass():
         description="Analyst forensic triage for transaction TX-051-WIRE-7741",
         created_at="2026-10-16T09:14:22Z",
         transaction=tx,
-        evidence_records=[],
+        evidence_records=[EvidenceRecord(
+            evidence_id="EV-051-SCREEN-TEST",
+            evidence_type="SANCTIONS_PEP_SCREENING",
+            timestamp="2026-10-16T09:14:00Z",
+            source_system="OFAC_TEST_FIXTURE",
+            source_version="test",
+            provenance_type="LOCAL_DETERMINISTIC_FIXTURE",
+            verification_status="VERIFIED",
+            data={"match_status": "NO_MATCH", "counterparty_name": "Wholesale Grocery Distributors Inc", "counterparty_country": "US", "list_id": "OFAC-TEST"},
+            is_synthetic=True,
+        )],
     )
     report = run_validated_workflow(case_051)
     assert report.fast_path_used is True
@@ -244,12 +254,15 @@ def test_scenario_a_case_051_fast_path_bypass():
     assert report.preliminary_risk_level == "LOW"
     assert report.decision == "RELEASE_WITH_PROVENANCE"
     assert report.latency_ms < 50.0
-    assert report.claims == []
+    # The fast path must preserve explicit claims and bind the sanctions claim
+    # to the supplied screening evidence instead of returning an empty report.
+    assert len(report.claims) == 3
+    assert report.claims[2].evidence_ids == ["EV-051-SCREEN-TEST"]
     assert report.rule_results == []
 
 
 def test_custom_case_id_does_not_use_benchmark_fixture_fields():
-    from backend.app.schemas import Transaction, InvestigationCase
+    from backend.app.schemas import Transaction, InvestigationCase, EvidenceRecord
 
     case = InvestigationCase(
         case_id="TX-CUSTOM-CASE-021",
@@ -271,7 +284,17 @@ def test_custom_case_id_does_not_use_benchmark_fixture_fields():
             destination_country="US",
             memo="Retail invoice settlement",
         ),
-        evidence_records=[],
+        evidence_records=[EvidenceRecord(
+            evidence_id="EV-CUSTOM-SCREEN-TEST",
+            evidence_type="SANCTIONS_PEP_SCREENING",
+            timestamp="2026-10-17T12:00:00Z",
+            source_system="OFAC_TEST_FIXTURE",
+            source_version="test",
+            provenance_type="LOCAL_DETERMINISTIC_FIXTURE",
+            verification_status="VERIFIED",
+            data={"match_status": "NO_MATCH", "counterparty_name": "Independent Grocery Retail", "counterparty_country": "US", "list_id": "OFAC-TEST"},
+            is_synthetic=True,
+        )],
     )
 
     report = run_validated_workflow(case)
