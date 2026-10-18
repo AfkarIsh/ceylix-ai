@@ -253,7 +253,7 @@ export default function AgentStepperPanel({
   const quarantinedCount = result?.quarantined_claims?.length || 0;
 
   return (
-    <section className={`bg-slate-900/60 border border-slate-800 rounded-xl p-5 flex flex-col shadow-xl relative ${isInvestigating ? 'scan-line overflow-hidden' : ''}`}>
+    <section className={`min-w-0 w-full bg-slate-900/60 border border-slate-800 rounded-xl p-5 flex flex-col shadow-xl relative ${isInvestigating ? 'scan-line overflow-hidden' : ''}`}>
 
       {/* ── Panel Header ──────────────────────────────────────────── */}
       <div className="flex items-center justify-between pb-3.5 border-b border-slate-800">
