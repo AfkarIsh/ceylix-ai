@@ -219,7 +219,8 @@ python -m research.evaluation.run_experiment --simulate
 
 - **Ishaq Afkar** — *Lead Full-Stack & AI Systems Engineer*
 - **Cybersecurity & Risk Research Team** — *Adversarial testing, BFSI benchmark modeling, grounding validation*
-
+- **Aadhila Kuthub Nawfeer** — *Digital Product Engineer*
+- **AI & Software Product Development** — *AI-powered applications, full-stack engineering, product design & innovation*
 ---
 
 <div align="center">
