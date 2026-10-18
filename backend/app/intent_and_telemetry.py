@@ -113,6 +113,11 @@ class IngestionIntentResult:
         self.validation_error = validation_error
         self.warnings = warnings or []
 
+    @property
+    def input_intent(self) -> IntentType:
+        """Backward-compatible alias for callers using the former field name."""
+        return self.intent
+
 
 def classify_input_intent(text: str, transaction: Optional[Transaction] = None) -> IngestionIntentResult:
     """
