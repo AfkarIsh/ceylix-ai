@@ -271,7 +271,7 @@ export default function DossierPanel({
   const displayCaseId = result?.case_id || caseId;
 
   return (
-    <section className="bg-slate-900/60 border border-slate-800 rounded-xl p-5 flex flex-col shadow-xl">
+    <section className="min-w-0 w-full bg-slate-900/60 border border-slate-800 rounded-xl p-5 flex flex-col shadow-xl">
 
       {/* ── Panel Header ──────────────────────────────────────────── */}
       <div className="flex items-center justify-between pb-3.5 border-b border-slate-800">
