@@ -76,7 +76,17 @@ def test_scenario_a_benign_domestic_grocery():
             destination_country="US",
             memo="Weekly grocery supplies",
         ),
-        evidence_records=[],
+        evidence_records=[EvidenceRecord(
+            evidence_id="EV-SCENARIO-A-SCREEN",
+            evidence_type="SANCTIONS_PEP_SCREENING",
+            timestamp="2026-03-30T10:00:00Z",
+            source_system="OFAC_TEST_FIXTURE",
+            source_version="test",
+            provenance_type="LOCAL_DETERMINISTIC_FIXTURE",
+            verification_status="VERIFIED",
+            data={"match_status": "NO_MATCH", "counterparty_name": "WHOLE FOODS MARKET", "counterparty_country": "US", "list_id": "OFAC-TEST"},
+            is_synthetic=True,
+        )],
     )
     report = run_validated_workflow(case)
     assert report.fast_path_used is True
