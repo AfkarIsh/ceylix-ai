@@ -116,10 +116,10 @@ export default function Header({
   onResetWorkspace,
 }) {
   return (
-    <header className="border-b border-slate-800/80 bg-slate-900/70 backdrop-blur-md sticky top-0 z-40 px-6 py-3.5">
-      <div className="max-w-[1400px] mx-auto flex flex-col md:flex-row md:items-center justify-between gap-4">
+    <header className="border-b border-slate-800/80 bg-slate-900/70 backdrop-blur-md sticky top-0 z-40 px-3 sm:px-6 py-3.5">
+      <div className="max-w-[1400px] min-w-0 mx-auto flex flex-col md:flex-row md:items-center justify-between gap-4">
         {/* ── Brand ─────────────────────────────────────────────────── */}
-        <div className="flex items-center gap-3.5">
+        <div className="flex items-center gap-3.5 min-w-0">
           <div className="h-10 w-10 rounded-lg bg-gradient-to-br from-cyan-500/20 to-blue-600/30 border border-cyan-500/40 flex items-center justify-center shadow-lg shadow-cyan-950/50 flex-shrink-0">
             <Shield className="w-5 h-5 text-cyan-400" />
           </div>
@@ -140,16 +140,17 @@ export default function Header({
         </div>
 
         {/* ── Actions ───────────────────────────────────────────────── */}
-        <div className="flex items-center gap-2.5 flex-shrink-0">
+        <div className="flex flex-wrap items-center gap-2.5 min-w-0 max-w-full">
 
           {/* History Drawer Trigger */}
           <button
             onClick={onOpenHistory}
             className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800/80 hover:bg-slate-700/80 hover:border-slate-600 text-slate-200 transition-all shadow-sm"
             title="Open Case History Log"
+            aria-label="Open Case History Log"
           >
             <History className="w-3.5 h-3.5 text-indigo-400" />
-            <span>Case History</span>
+            <span className="hidden sm:inline">Case History</span>
             <span className="ml-1 text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-semibold">
               {historyCount}
             </span>
@@ -163,7 +164,7 @@ export default function Header({
             aria-label="Start a new investigation"
           >
             <Plus className="w-3.5 h-3.5 text-cyan-300" />
-            <span>New Investigation</span>
+            <span className="hidden sm:inline">New Investigation</span>
           </button>
 
           {/* Settings Modal Trigger */}
@@ -171,9 +172,10 @@ export default function Header({
             onClick={onOpenSettings}
             className="relative inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800/80 hover:bg-slate-700/80 hover:border-slate-600 text-slate-200 transition-all shadow-sm"
             title="Configure Pipeline & Custom Gemini Key"
+            aria-label="Configure Pipeline and Custom Gemini Key"
           >
             <Settings className="w-3.5 h-3.5 text-slate-300" />
-            <span>Settings</span>
+            <span className="hidden sm:inline">Settings</span>
             {customApiKey && (
               <span
                 className="w-2 h-2 rounded-full bg-emerald-400 border border-slate-900 absolute -top-0.5 -right-0.5"
