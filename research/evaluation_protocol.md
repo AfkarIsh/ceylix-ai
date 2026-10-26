@@ -97,9 +97,9 @@ python -m research.evaluation.run_experiment --simulate
 Set your API key:
 ```bash
 # Windows PowerShell
-$env:OPENROUTER_API_KEY="sk-or-v1-..."
+$env:OPENROUTER_API_KEY="<your_openrouter_api_key>"
 # or
-$env:GEMINI_API_KEY="..."
+$env:GEMINI_API_KEY="<your_gemini_api_key>"
 
 # Run live benchmark
 python -m research.evaluation.run_experiment
